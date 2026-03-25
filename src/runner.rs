@@ -302,7 +302,7 @@ impl Runner {
             let mut lines = Vec::new();
             if let Some(pipe) = child_stdout {
                 let reader = BufReader::new(pipe);
-                for line in reader.lines().map_while(Result::ok) {
+                for line in reader.lines().map_while(|r| r.ok()) {
                     let _ = tx_out.send((Stream::Stdout, line.clone()));
                     lines.push(line);
                 }
@@ -315,7 +315,7 @@ impl Runner {
             let mut lines = Vec::new();
             if let Some(pipe) = child_stderr {
                 let reader = BufReader::new(pipe);
-                for line in reader.lines().map_while(Result::ok) {
+                for line in reader.lines().map_while(|r| r.ok()) {
                     let _ = tx.send((Stream::Stderr, line.clone()));
                     lines.push(line);
                 }
@@ -426,11 +426,13 @@ mod tests {
     fn runner_config_merge_config() {
         let mut rc = RunnerConfig::new(PathBuf::from("."));
 
-        let mut config = Config::default();
-        config.adapter = Some("python".into());
-        config.args = vec!["-v".into()];
-        config.timeout = Some(60);
-        config.env.insert("CI".into(), "true".into());
+        let config = Config {
+            adapter: Some("python".into()),
+            args: vec!["-v".into()],
+            timeout: Some(60),
+            env: HashMap::from([("CI".into(), "true".into())]),
+            ..Default::default()
+        };
 
         rc.merge_config(&config);
 
@@ -448,11 +450,13 @@ mod tests {
         rc.timeout = Some(Duration::from_secs(30));
         rc.env.insert("CI".into(), "false".into());
 
-        let mut config = Config::default();
-        config.adapter = Some("python".into());
-        config.args = vec!["-v".into()];
-        config.timeout = Some(60);
-        config.env.insert("CI".into(), "true".into());
+        let config = Config {
+            adapter: Some("python".into()),
+            args: vec!["-v".into()],
+            timeout: Some(60),
+            env: HashMap::from([("CI".into(), "true".into())]),
+            ..Default::default()
+        };
 
         rc.merge_config(&config);
 

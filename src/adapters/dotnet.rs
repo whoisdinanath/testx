@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use super::{DetectionResult, TestAdapter, TestCase, TestRunResult, TestStatus, TestSuite};
+use super::{DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus, TestSuite};
 
 pub struct DotnetAdapter;
 
@@ -90,7 +90,14 @@ impl TestAdapter for DotnetAdapter {
     fn parse_output(&self, stdout: &str, stderr: &str, exit_code: i32) -> TestRunResult {
         let combined = format!("{}\n{}", stdout, stderr);
 
-        let suites = parse_dotnet_output(&combined, exit_code);
+        let mut suites = parse_dotnet_output(&combined, exit_code);
+
+        // Enrich failed tests with error details from stack traces
+        let failures = parse_dotnet_failures(&combined);
+        if !failures.is_empty() {
+            enrich_with_errors(&mut suites, &failures);
+        }
+
         let duration = parse_dotnet_duration(&combined).unwrap_or(Duration::from_secs(0));
 
         TestRunResult {
@@ -271,6 +278,357 @@ fn parse_dotnet_duration(output: &str) -> Option<Duration> {
     None
 }
 
+/// A parsed failure from dotnet test output.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct DotnetFailure {
+    /// Test name
+    test_name: String,
+    /// Error/assertion message
+    message: String,
+    /// Stack trace lines
+    stack_trace: Option<String>,
+    /// File location extracted from stack trace
+    location: Option<String>,
+}
+
+/// Parse dotnet test failure blocks.
+///
+/// Format:
+/// ```text
+///   Failed test_divide [< 1 ms]
+///   Error Message:
+///    Assert.Equal() Failure
+///    Expected: 4
+///    Actual:   3
+///   Stack Trace:
+///    at MyApp.Tests.MathTest.TestDivide() in /path/MathTest.cs:line 42
+/// ```
+///
+/// Or xUnit/NUnit format:
+/// ```text
+///   X test_divide [< 1 ms]
+///     Error Message:
+///       Assert.Equal() Failure
+///     Stack Trace:
+///       at MyApp.Tests.MathTest.TestDivide() in /tests/MathTest.cs:line 42
+/// ```
+fn parse_dotnet_failures(output: &str) -> Vec<DotnetFailure> {
+    let mut failures = Vec::new();
+    let lines: Vec<&str> = output.lines().collect();
+    let mut i = 0;
+
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
+
+        // Find "Failed test_name [duration]" lines
+        if trimmed.starts_with("Failed ") || trimmed.starts_with("X ") {
+            let rest = if let Some(r) = trimmed.strip_prefix("Failed ") {
+                r
+            } else if let Some(r) = trimmed.strip_prefix("X ") {
+                r
+            } else {
+                i += 1;
+                continue;
+            };
+
+            // Extract test name (before the duration bracket)
+            let test_name = rest
+                .rfind('[')
+                .map(|idx| rest[..idx].trim())
+                .unwrap_or(rest)
+                .to_string();
+
+            i += 1;
+
+            // Collect error message and stack trace
+            let mut message_lines = Vec::new();
+            let mut stack_lines = Vec::new();
+            let mut in_message = false;
+            let mut in_stack = false;
+
+            while i < lines.len() {
+                let line = lines[i].trim();
+
+                // Detect section headers
+                if line == "Error Message:" || line.starts_with("Error Message:") {
+                    in_message = true;
+                    in_stack = false;
+                    i += 1;
+                    continue;
+                }
+                if line == "Stack Trace:" || line.starts_with("Stack Trace:") {
+                    in_message = false;
+                    in_stack = true;
+                    i += 1;
+                    continue;
+                }
+
+                // Stop at next test result or empty context
+                if line.starts_with("Passed ")
+                    || line.starts_with("Failed ")
+                    || line.starts_with("Skipped ")
+                    || line.starts_with("X ")
+                    || line.starts_with("Test Run")
+                    || line.starts_with("Total tests:")
+                {
+                    break;
+                }
+
+                if in_message && !line.is_empty() {
+                    message_lines.push(line.to_string());
+                } else if in_stack && !line.is_empty() {
+                    stack_lines.push(line.to_string());
+                }
+
+                i += 1;
+            }
+
+            let message = if message_lines.is_empty() {
+                "Test failed".to_string()
+            } else {
+                truncate_dotnet_message(&message_lines.join("\n"), 500)
+            };
+
+            let stack_trace = if stack_lines.is_empty() {
+                None
+            } else {
+                Some(stack_lines.iter().take(5).cloned().collect::<Vec<_>>().join("\n"))
+            };
+
+            let location = stack_lines
+                .iter()
+                .find_map(|l| extract_dotnet_location(l));
+
+            failures.push(DotnetFailure {
+                test_name,
+                message,
+                stack_trace,
+                location,
+            });
+            continue;
+        }
+
+        i += 1;
+    }
+
+    failures
+}
+
+/// Extract file location from a .NET stack trace line.
+/// "at Namespace.Class.Method() in /path/File.cs:line 42"
+fn extract_dotnet_location(line: &str) -> Option<String> {
+    // Look for " in " followed by a path and ":line N"
+    if let Some(in_idx) = line.find(" in ") {
+        let path_part = &line[in_idx + 4..];
+        let path = path_part.trim();
+        if !path.is_empty() {
+            return Some(path.to_string());
+        }
+    }
+    // Direct file:line pattern
+    if (line.contains(".cs:") || line.contains(".fs:")) && line.contains("line ") {
+        return Some(line.trim().to_string());
+    }
+    None
+}
+
+/// Truncate a failure message.
+fn truncate_dotnet_message(msg: &str, max_len: usize) -> String {
+    if msg.len() <= max_len {
+        msg.to_string()
+    } else {
+        format!("{}...", &msg[..max_len])
+    }
+}
+
+/// Enrich test cases with failure details.
+fn enrich_with_errors(suites: &mut [TestSuite], failures: &[DotnetFailure]) {
+    for suite in suites.iter_mut() {
+        for test in suite.tests.iter_mut() {
+            if test.status != TestStatus::Failed || test.error.is_some() {
+                continue;
+            }
+            if let Some(failure) = find_matching_dotnet_failure(&test.name, failures) {
+                test.error = Some(TestError {
+                    message: failure.message.clone(),
+                    location: failure.location.clone(),
+                });
+            }
+        }
+    }
+}
+
+/// Find a matching failure for a test name.
+fn find_matching_dotnet_failure<'a>(
+    test_name: &str,
+    failures: &'a [DotnetFailure],
+) -> Option<&'a DotnetFailure> {
+    for failure in failures {
+        if failure.test_name == test_name {
+            return Some(failure);
+        }
+        // Partial match: test name might be namespace-qualified
+        if failure.test_name.ends_with(test_name) || test_name.ends_with(&failure.test_name) {
+            return Some(failure);
+        }
+    }
+    if failures.len() == 1 {
+        return Some(&failures[0]);
+    }
+    None
+}
+
+/// Parse dotnet test TRX report files.
+///
+/// TRX files are XML test result files generated by `dotnet test --logger trx`.
+/// Located at: TestResults/*.trx
+pub fn parse_trx_report(project_dir: &Path) -> Vec<TestSuite> {
+    let results_dir = project_dir.join("TestResults");
+    if !results_dir.is_dir() {
+        return Vec::new();
+    }
+
+    let mut suites = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(&results_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.ends_with(".trx")
+                && let Ok(content) = std::fs::read_to_string(entry.path()) {
+                    let mut parsed = parse_trx_content(&content);
+                    suites.append(&mut parsed);
+                }
+        }
+    }
+
+    suites
+}
+
+/// Parse TRX XML content.
+///
+/// TRX format (simplified):
+/// ```xml
+/// <TestRun>
+///   <Results>
+///     <UnitTestResult testName="TestAdd" outcome="Passed" duration="00:00:00.001">
+///     </UnitTestResult>
+///     <UnitTestResult testName="TestDiv" outcome="Failed" duration="00:00:00.002">
+///       <Output>
+///         <ErrorInfo>
+///           <Message>Assert.Equal failure</Message>
+///           <StackTrace>at Test.TestDiv() in Test.cs:line 42</StackTrace>
+///         </ErrorInfo>
+///       </Output>
+///     </UnitTestResult>
+///   </Results>
+/// </TestRun>
+/// ```
+fn parse_trx_content(content: &str) -> Vec<TestSuite> {
+    let mut tests = Vec::new();
+
+    // Find all <UnitTestResult> elements
+    let mut search_from = 0;
+
+    while let Some(start) = content[search_from..].find("<UnitTestResult") {
+        let abs_start = search_from + start;
+
+        // Find end of this element
+        let end = if let Some(close) = content[abs_start..].find("</UnitTestResult>") {
+            abs_start + close + 17
+        } else if let Some(self_close) = content[abs_start..].find("/>") {
+            abs_start + self_close + 2
+        } else {
+            break;
+        };
+
+        let element = &content[abs_start..end];
+
+        let test_name = extract_trx_attr(element, "testName").unwrap_or_else(|| "unknown".into());
+        let outcome = extract_trx_attr(element, "outcome").unwrap_or_default();
+        let duration_str = extract_trx_attr(element, "duration").unwrap_or_default();
+
+        let status = match outcome.as_str() {
+            "Passed" => TestStatus::Passed,
+            "Failed" => TestStatus::Failed,
+            "NotExecuted" | "Inconclusive" => TestStatus::Skipped,
+            _ => TestStatus::Failed,
+        };
+
+        let duration = parse_trx_duration(&duration_str);
+
+        let error = if status == TestStatus::Failed {
+            let message = extract_trx_error_message(element)
+                .unwrap_or_else(|| "Test failed".into());
+            let location = extract_trx_stack_trace(element)
+                .and_then(|st| extract_dotnet_location(&st));
+            Some(TestError {
+                message,
+                location,
+            })
+        } else {
+            None
+        };
+
+        tests.push(TestCase {
+            name: test_name,
+            status,
+            duration,
+            error,
+        });
+
+        search_from = end;
+    }
+
+    if tests.is_empty() {
+        return Vec::new();
+    }
+
+    vec![TestSuite {
+        name: "tests".into(),
+        tests,
+    }]
+}
+
+/// Extract an attribute from a TRX element.
+fn extract_trx_attr(element: &str, attr: &str) -> Option<String> {
+    let pattern = format!("{}=\"", attr);
+    let start = element.find(&pattern)?;
+    let value_start = start + pattern.len();
+    let value_end = element[value_start..].find('"')?;
+    Some(element[value_start..value_start + value_end].to_string())
+}
+
+/// Parse TRX duration format: "00:00:00.001"
+fn parse_trx_duration(s: &str) -> Duration {
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() == 3 {
+        let hours: f64 = parts[0].parse().unwrap_or(0.0);
+        let mins: f64 = parts[1].parse().unwrap_or(0.0);
+        let secs: f64 = parts[2].parse().unwrap_or(0.0);
+        Duration::from_secs_f64(hours * 3600.0 + mins * 60.0 + secs)
+    } else {
+        Duration::from_millis(0)
+    }
+}
+
+/// Extract error message from TRX <ErrorInfo><Message> element.
+fn extract_trx_error_message(element: &str) -> Option<String> {
+    let msg_start = element.find("<Message>")?;
+    let msg_end = element[msg_start..].find("</Message>")?;
+    let message = &element[msg_start + 9..msg_start + msg_end];
+    Some(message.trim().to_string())
+}
+
+/// Extract stack trace from TRX <ErrorInfo><StackTrace> element.
+fn extract_trx_stack_trace(element: &str) -> Option<String> {
+    let st_start = element.find("<StackTrace>")?;
+    let st_end = element[st_start..].find("</StackTrace>")?;
+    let trace = &element[st_start + 12..st_start + st_end];
+    Some(trace.trim().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -390,5 +748,236 @@ Total tests: 5
             parse_dotnet_test_duration("< 1 ms"),
             Duration::from_millis(1)
         );
+    }
+
+    #[test]
+    fn parse_dotnet_failure_blocks() {
+        let output = r#"
+  Passed test_add [2 ms]
+  Failed test_divide [< 1 ms]
+  Error Message:
+   Assert.Equal() Failure
+   Expected: 4
+   Actual:   3
+  Stack Trace:
+   at MyApp.Tests.MathTest.TestDivide() in /tests/MathTest.cs:line 42
+
+Test Run Failed.
+Total tests: 2
+     Passed: 1
+     Failed: 1
+"#;
+        let failures = parse_dotnet_failures(output);
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].test_name, "test_divide");
+        assert!(failures[0].message.contains("Assert.Equal"));
+        assert!(failures[0].location.is_some());
+        assert!(failures[0]
+            .location
+            .as_ref()
+            .unwrap()
+            .contains("MathTest.cs:line 42"));
+    }
+
+    #[test]
+    fn parse_dotnet_multiple_failures() {
+        let output = r#"
+  Failed test_a [1 ms]
+  Error Message:
+   Expected True but got False
+  Stack Trace:
+   at Tests.A() in /tests/Test.cs:line 10
+
+  Failed test_b [2 ms]
+  Error Message:
+   Null reference
+  Stack Trace:
+   at Tests.B() in /tests/Test.cs:line 20
+
+Test Run Failed.
+"#;
+        let failures = parse_dotnet_failures(output);
+        assert_eq!(failures.len(), 2);
+        assert_eq!(failures[0].test_name, "test_a");
+        assert_eq!(failures[1].test_name, "test_b");
+    }
+
+    #[test]
+    fn parse_dotnet_failure_no_stack() {
+        let output = r#"
+  Failed test_x [1 ms]
+  Error Message:
+   Something went wrong
+
+  Passed test_y [1 ms]
+"#;
+        let failures = parse_dotnet_failures(output);
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].stack_trace.is_none());
+    }
+
+    #[test]
+    fn extract_dotnet_location_test() {
+        assert_eq!(
+            extract_dotnet_location(
+                "at MyApp.Tests.MathTest.TestDivide() in /tests/MathTest.cs:line 42"
+            ),
+            Some("/tests/MathTest.cs:line 42".into())
+        );
+        assert!(extract_dotnet_location("no location here").is_none());
+    }
+
+    #[test]
+    fn enrich_with_errors_test() {
+        let mut suites = vec![TestSuite {
+            name: "tests".into(),
+            tests: vec![
+                TestCase {
+                    name: "test_add".into(),
+                    status: TestStatus::Passed,
+                    duration: Duration::from_millis(0),
+                    error: None,
+                },
+                TestCase {
+                    name: "test_divide".into(),
+                    status: TestStatus::Failed,
+                    duration: Duration::from_millis(0),
+                    error: None,
+                },
+            ],
+        }];
+        let failures = vec![DotnetFailure {
+            test_name: "test_divide".into(),
+            message: "Assert.Equal failure".into(),
+            stack_trace: Some(
+                "at Test.TestDivide() in /tests/Test.cs:line 42".into(),
+            ),
+            location: Some("/tests/Test.cs:line 42".into()),
+        }];
+        enrich_with_errors(&mut suites, &failures);
+        assert!(suites[0].tests[0].error.is_none());
+        let err = suites[0].tests[1].error.as_ref().unwrap();
+        assert_eq!(err.message, "Assert.Equal failure");
+        assert!(err.location.as_ref().unwrap().contains("Test.cs:line 42"));
+    }
+
+    #[test]
+    fn truncate_dotnet_message_test() {
+        assert_eq!(truncate_dotnet_message("short", 100), "short");
+        let long = "m".repeat(600);
+        let truncated = truncate_dotnet_message(&long, 500);
+        assert!(truncated.ends_with("..."));
+    }
+
+    #[test]
+    fn parse_trx_basic() {
+        let content = r#"<?xml version="1.0" encoding="UTF-8"?>
+<TestRun>
+  <Results>
+    <UnitTestResult testName="TestAdd" outcome="Passed" duration="00:00:00.001">
+    </UnitTestResult>
+    <UnitTestResult testName="TestDiv" outcome="Failed" duration="00:00:00.002">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.Equal failure</Message>
+          <StackTrace>at Test.TestDiv() in /tests/Test.cs:line 42</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+</TestRun>"#;
+        let suites = parse_trx_content(content);
+        assert_eq!(suites.len(), 1);
+        assert_eq!(suites[0].tests.len(), 2);
+        assert_eq!(suites[0].tests[0].name, "TestAdd");
+        assert_eq!(suites[0].tests[0].status, TestStatus::Passed);
+        assert_eq!(suites[0].tests[1].name, "TestDiv");
+        assert_eq!(suites[0].tests[1].status, TestStatus::Failed);
+        assert!(suites[0].tests[1].error.is_some());
+    }
+
+    #[test]
+    fn parse_trx_skipped() {
+        let content = r#"<TestRun><Results>
+<UnitTestResult testName="TestSkip" outcome="NotExecuted" duration="00:00:00.000"/>
+</Results></TestRun>"#;
+        let suites = parse_trx_content(content);
+        assert_eq!(suites[0].tests[0].status, TestStatus::Skipped);
+    }
+
+    #[test]
+    fn parse_trx_duration_test() {
+        assert_eq!(
+            parse_trx_duration("00:00:01.500"),
+            Duration::from_millis(1500)
+        );
+        assert_eq!(
+            parse_trx_duration("00:01:00.000"),
+            Duration::from_secs(60)
+        );
+    }
+
+    #[test]
+    fn extract_trx_attr_test() {
+        assert_eq!(
+            extract_trx_attr(r#"<UnitTestResult testName="TestAdd" outcome="Passed">"#, "testName"),
+            Some("TestAdd".into())
+        );
+        assert_eq!(
+            extract_trx_attr(r#"<UnitTestResult testName="TestAdd" outcome="Passed">"#, "outcome"),
+            Some("Passed".into())
+        );
+    }
+
+    #[test]
+    fn extract_trx_error_message_test() {
+        let element = "<Output><ErrorInfo><Message>Assert.Equal failure</Message></ErrorInfo></Output>";
+        assert_eq!(
+            extract_trx_error_message(element),
+            Some("Assert.Equal failure".into())
+        );
+    }
+
+    #[test]
+    fn extract_trx_stack_trace_test() {
+        let element = "<Output><ErrorInfo><StackTrace>at Test.Run() in Test.cs:line 10</StackTrace></ErrorInfo></Output>";
+        assert_eq!(
+            extract_trx_stack_trace(element),
+            Some("at Test.Run() in Test.cs:line 10".into())
+        );
+    }
+
+    #[test]
+    fn parse_dotnet_failure_integration() {
+        let stdout = r#"
+Starting test execution, please wait...
+
+  Passed test_add [2 ms]
+  Failed test_divide [< 1 ms]
+  Error Message:
+   Assert.Equal() Failure
+   Expected: 4
+   Actual:   3
+  Stack Trace:
+   at Tests.Divide() in /tests/MathTest.cs:line 42
+
+Test Run Failed.
+Total tests: 2
+     Passed: 1
+     Failed: 1
+"#;
+        let adapter = DotnetAdapter::new();
+        let result = adapter.parse_output(stdout, "", 1);
+
+        assert_eq!(result.total_tests(), 2);
+        assert_eq!(result.total_passed(), 1);
+        assert_eq!(result.total_failed(), 1);
+        let failed = result.suites[0]
+            .tests
+            .iter()
+            .find(|t| t.status == TestStatus::Failed)
+            .unwrap();
+        assert!(failed.error.is_some());
+        assert!(failed.error.as_ref().unwrap().message.contains("Assert.Equal"));
     }
 }

@@ -303,7 +303,7 @@ mod tests {
     fn error_source_chain() {
         let err = TestxError::ExecutionFailed {
             command: "test".into(),
-            source: std::io::Error::new(std::io::ErrorKind::Other, "boom"),
+            source: std::io::Error::other("boom"),
         };
         assert!(std::error::Error::source(&err).is_some());
 

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use colored::Colorize;
 use wait_timeout::ChildExt;
 
@@ -62,6 +62,12 @@ enum Commands {
     List,
     /// Generate a testx.toml config file for this project
     Init,
+    /// Generate shell completions
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
 }
 
 #[derive(ValueEnum, Clone, Default)]
@@ -101,6 +107,11 @@ fn run(cli: Cli) -> Result<()> {
     let engine = detection::DetectionEngine::new();
 
     match cli.command.unwrap_or(Commands::Run { args: vec![] }) {
+        Commands::Completions { shell } => {
+            testx::completions::generate_completions(shell, &mut Cli::command());
+            Ok(())
+        }
+
         Commands::List => {
             println!("{}", "Supported test frameworks:".bold());
             println!();

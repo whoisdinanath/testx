@@ -1,7 +1,15 @@
 pub mod adapters;
+pub mod completions;
 pub mod config;
+pub mod coverage;
 pub mod detection;
 pub mod error;
 pub mod events;
+pub mod filter;
+pub mod history;
 pub mod output;
+pub mod parallel;
+pub mod plugin;
+pub mod retry;
 pub mod runner;
+pub mod watcher;

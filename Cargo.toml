@@ -11,6 +11,7 @@ categories = ["development-tools::testing", "command-line-utilities"]
 [dependencies]
 anyhow = "1.0.102"
 clap = { version = "4.6.0", features = ["derive"] }
+clap_complete = "4.6"
 colored = "3.1.1"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
@@ -20,5 +21,18 @@ wait-timeout = "0.2"
 
 [dev-dependencies]
 assert_cmd = "2.0"
+criterion = "0.5"
 predicates = "3.1"
 tempfile = "3.27.0"
+
+[[bench]]
+name = "detection"
+harness = false
+
+[[bench]]
+name = "parsing"
+harness = false
+
+[[bench]]
+name = "output"
+harness = false
