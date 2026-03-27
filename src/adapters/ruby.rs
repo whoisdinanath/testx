@@ -52,9 +52,20 @@ impl RubyAdapter {
             return Some("minitest");
         }
 
-        // test/ directory exists
-        if project_dir.join("test").is_dir() {
-            return Some("minitest");
+        // test/ directory exists with .rb files inside (not just any test/ dir)
+        if project_dir.join("test").is_dir()
+            && let Ok(entries) = std::fs::read_dir(project_dir.join("test"))
+        {
+            let has_ruby_files = entries
+                .filter_map(|e| e.ok())
+                .any(|e| {
+                    e.path()
+                        .extension()
+                        .is_some_and(|ext| ext == "rb")
+                });
+            if has_ruby_files {
+                return Some("minitest");
+            }
         }
 
         None
@@ -1386,10 +1397,21 @@ Expected: true
     #[test]
     fn detect_minitest_via_test_dir() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join("test")).unwrap();
+        let test_dir = dir.path().join("test");
+        std::fs::create_dir(&test_dir).unwrap();
+        std::fs::write(test_dir.join("test_example.rb"), "# test").unwrap();
         let adapter = RubyAdapter::new();
         let det = adapter.detect(dir.path()).unwrap();
         assert_eq!(det.framework, "minitest");
+    }
+
+    #[test]
+    fn detect_no_ruby_from_bare_test_dir() {
+        // A bare test/ directory without .rb files should NOT trigger Ruby detection
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("test")).unwrap();
+        let adapter = RubyAdapter::new();
+        assert!(adapter.detect(dir.path()).is_none());
     }
 
     #[test]

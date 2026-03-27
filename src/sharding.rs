@@ -102,75 +102,85 @@ impl ShardingMode {
 
 /// Slice-based sharding: flatten all tests, assign round-robin by position.
 fn shard_slice(result: &TestRunResult, index: usize, total: usize) -> TestRunResult {
-    // Flatten all tests with their suite reference
-    let all_tests: Vec<(&str, &TestCase)> = result
+    // Flatten all tests with their suite index
+    let all_tests: Vec<(usize, &TestCase)> = result
         .suites
         .iter()
-        .flat_map(|s| s.tests.iter().map(move |t| (s.name.as_str(), t)))
+        .enumerate()
+        .flat_map(|(si, s)| s.tests.iter().map(move |t| (si, t)))
         .collect();
 
     // Keep only tests where (position % total) == (index - 1) since index is 1-based
     let bucket = index - 1;
-    let mut suite_map: std::collections::HashMap<String, Vec<TestCase>> =
-        std::collections::HashMap::new();
+    let mut suite_tests: Vec<Vec<TestCase>> = vec![Vec::new(); result.suites.len()];
 
-    for (i, (suite_name, test)) in all_tests.iter().enumerate() {
+    for (i, (suite_idx, test)) in all_tests.iter().enumerate() {
         if i % total == bucket {
-            suite_map
-                .entry(suite_name.to_string())
-                .or_default()
-                .push((*test).clone());
+            suite_tests[*suite_idx].push((*test).clone());
         }
     }
 
-    build_sharded_result(result, suite_map)
-}
-
-/// Hash-based sharding: deterministic assignment based on hash of suite+test name.
-fn shard_hash(result: &TestRunResult, index: usize, total: usize) -> TestRunResult {
-    let bucket = index - 1;
-    let mut suite_map: std::collections::HashMap<String, Vec<TestCase>> =
-        std::collections::HashMap::new();
-
-    for suite in &result.suites {
-        for test in &suite.tests {
-            let hash_key = format!("{}::{}", suite.name, test.name);
-            let mut hasher = DefaultHasher::new();
-            hash_key.hash(&mut hasher);
-            let hash_val = hasher.finish();
-
-            if (hash_val as usize) % total == bucket {
-                suite_map
-                    .entry(suite.name.clone())
-                    .or_default()
-                    .push(test.clone());
-            }
-        }
-    }
-
-    build_sharded_result(result, suite_map)
-}
-
-fn build_sharded_result(
-    original: &TestRunResult,
-    suite_map: std::collections::HashMap<String, Vec<TestCase>>,
-) -> TestRunResult {
-    // Preserve original suite ordering
-    let suites: Vec<TestSuite> = original
+    let suites: Vec<TestSuite> = result
         .suites
         .iter()
-        .filter_map(|orig_suite| {
-            suite_map.get(&orig_suite.name).map(|tests| TestSuite {
-                name: orig_suite.name.clone(),
-                tests: tests.clone(),
-            })
+        .enumerate()
+        .filter_map(|(i, orig)| {
+            if suite_tests[i].is_empty() {
+                None
+            } else {
+                Some(TestSuite {
+                    name: orig.name.clone(),
+                    tests: std::mem::take(&mut suite_tests[i]),
+                })
+            }
         })
         .collect();
 
     TestRunResult {
         suites,
-        duration: original.duration,
-        raw_exit_code: original.raw_exit_code,
+        duration: result.duration,
+        raw_exit_code: result.raw_exit_code,
+    }
+}
+
+/// Hash-based sharding: deterministic assignment based on hash of suite_index+test name.
+fn shard_hash(result: &TestRunResult, index: usize, total: usize) -> TestRunResult {
+    let bucket = index - 1;
+    let mut suite_tests: Vec<Vec<TestCase>> = vec![Vec::new(); result.suites.len()];
+
+    for (si, suite) in result.suites.iter().enumerate() {
+        for test in &suite.tests {
+            let hash_key = format!("{}::{}::{}", si, suite.name, test.name);
+            let mut hasher = DefaultHasher::new();
+            hash_key.hash(&mut hasher);
+            let hash_val = hasher.finish();
+
+            if (hash_val as usize) % total == bucket {
+                suite_tests[si].push(test.clone());
+            }
+        }
+    }
+
+    let suites: Vec<TestSuite> = result
+        .suites
+        .iter()
+        .enumerate()
+        .filter_map(|(i, orig)| {
+            if suite_tests[i].is_empty() {
+                None
+            } else {
+                Some(TestSuite {
+                    name: orig.name.clone(),
+                    tests: std::mem::take(&mut suite_tests[i]),
+                })
+            }
+        })
+        .collect();
+
+    TestRunResult {
+        suites,
+        duration: result.duration,
+        raw_exit_code: result.raw_exit_code,
     }
 }
 

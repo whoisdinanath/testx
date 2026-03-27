@@ -128,8 +128,8 @@ fn write_group(lines: &mut Vec<String>, suite: &TestSuite) {
 
     for test in &suite.tests {
         let icon = match test.status {
-            TestStatus::Passed => "✅",
-            TestStatus::Failed => "❌",
+            TestStatus::Passed => "",
+            TestStatus::Failed => "",
             TestStatus::Skipped => "⏭️",
         };
         lines.push(format!("  {icon} {} ({:?})", test.name, test.duration));
@@ -169,9 +169,9 @@ fn write_annotations(lines: &mut Vec<String>, suite: &TestSuite) {
 fn write_step_summary_commands(lines: &mut Vec<String>, result: &TestRunResult) {
     let mut md = String::with_capacity(1024);
     let icon = if result.is_success() {
-        "✅ Passed"
+        " Passed"
     } else {
-        "❌ Failed"
+        " Failed"
     };
 
     let _ = writeln!(md, "### Test Results — {icon}");

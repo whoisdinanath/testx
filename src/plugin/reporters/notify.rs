@@ -93,9 +93,9 @@ impl Plugin for NotifyReporter {
 /// Build a notification from test results.
 pub fn build_notification(result: &TestRunResult, config: &NotifyConfig) -> Notification {
     let status = if result.is_success() {
-        "✅ PASSED"
+        "PASSED"
     } else {
-        "❌ FAILED"
+        "FAILED"
     };
 
     let title = format!("{} — {status}", config.title_prefix);

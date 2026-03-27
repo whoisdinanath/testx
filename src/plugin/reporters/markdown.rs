@@ -107,9 +107,9 @@ pub fn generate_markdown(result: &TestRunResult, config: &MarkdownConfig) -> Str
 
 fn write_header(md: &mut String, result: &TestRunResult, config: &MarkdownConfig) {
     let status_icon = if result.is_success() {
-        "✅ PASS"
+        " PASS"
     } else {
-        "❌ FAIL"
+        " FAIL"
     };
 
     let _ = writeln!(md, "# Test Results");
@@ -179,8 +179,8 @@ fn write_suite_details(md: &mut String, result: &TestRunResult, config: &Markdow
 
         for test in &suite.tests {
             let (icon, status) = match test.status {
-                TestStatus::Passed => ("✅", "Pass"),
-                TestStatus::Failed => ("❌", "Fail"),
+                TestStatus::Passed => ("", "Pass"),
+                TestStatus::Failed => ("", "Fail"),
                 TestStatus::Skipped => ("⏭️", "Skip"),
             };
             let _ = writeln!(
@@ -199,7 +199,7 @@ fn write_suite_details(md: &mut String, result: &TestRunResult, config: &Markdow
             for test in suite.failures() {
                 if let Some(ref error) = test.error {
                     let _ = writeln!(md, "<details>");
-                    let _ = writeln!(md, "<summary>❌ {} — Error</summary>", test.name);
+                    let _ = writeln!(md, "<summary> {} — Error</summary>", test.name);
                     md.push('\n');
                     let _ = writeln!(md, "```");
                     let _ = writeln!(md, "{}", error.message);
@@ -221,7 +221,7 @@ fn write_failures(md: &mut String, result: &TestRunResult) {
 
     for suite in &result.suites {
         for test in suite.failures() {
-            let _ = writeln!(md, "### ❌ {}::{}", suite.name, test.name);
+            let _ = writeln!(md, "###  {}::{}", suite.name, test.name);
             md.push('\n');
             if let Some(ref error) = test.error {
                 let _ = writeln!(md, "```");
@@ -325,7 +325,7 @@ mod tests {
     fn markdown_header() {
         let md = generate_markdown(&make_result(), &MarkdownConfig::default());
         assert!(md.contains("# Test Results"));
-        assert!(md.contains("❌ FAIL"));
+        assert!(md.contains(" FAIL"));
         assert!(md.contains("**Total**: 5"));
         assert!(md.contains("**Passed**: 3"));
         assert!(md.contains("**Failed**: 1"));
@@ -343,7 +343,7 @@ mod tests {
             raw_exit_code: 0,
         };
         let md = generate_markdown(&result, &MarkdownConfig::default());
-        assert!(md.contains("✅ PASS"));
+        assert!(md.contains(" PASS"));
     }
 
     #[test]

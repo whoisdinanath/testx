@@ -214,9 +214,9 @@ fn write_body_close(html: &mut String) {
 
 fn write_header_section(html: &mut String, result: &TestRunResult, config: &HtmlConfig) {
     let status = if result.is_success() {
-        "<span class=\"pass-text\">✅ PASSED</span>"
+        "<span class=\"pass-text\"> PASSED</span>"
     } else {
-        "<span class=\"fail-text\">❌ FAILED</span>"
+        "<span class=\"fail-text\"> FAILED</span>"
     };
     let title = html_escape(&config.title);
 
@@ -320,9 +320,9 @@ fn write_suite_table(html: &mut String, result: &TestRunResult) {
 
     for suite in &result.suites {
         let status = if suite.is_passed() {
-            "<span class=\"pass-text\">✅</span>"
+            "<span class=\"pass-text\"></span>"
         } else {
-            "<span class=\"fail-text\">❌</span>"
+            "<span class=\"fail-text\"></span>"
         };
         let name = html_escape(&suite.name);
         let _ = writeln!(
@@ -365,8 +365,8 @@ fn write_suite_details(html: &mut String, result: &TestRunResult, config: &HtmlC
 
         for test in &suite.tests {
             let (class, icon) = match test.status {
-                TestStatus::Passed => ("pass-text", "✅"),
-                TestStatus::Failed => ("fail-text", "❌"),
+                TestStatus::Passed => ("pass-text", ""),
+                TestStatus::Failed => ("fail-text", ""),
                 TestStatus::Skipped => ("skip-text", "⏭️"),
             };
             let test_name = html_escape(&test.name);
@@ -398,7 +398,7 @@ fn write_failures_section(html: &mut String, result: &TestRunResult) {
         for test in suite.failures() {
             let suite_name = html_escape(&suite.name);
             let test_name = html_escape(&test.name);
-            let _ = writeln!(html, "<h3>❌ {suite_name}::{test_name}</h3>");
+            let _ = writeln!(html, "<h3> {suite_name}::{test_name}</h3>");
             if let Some(ref error) = test.error {
                 let msg = html_escape(&error.message);
                 let _ = writeln!(html, "<pre>{msg}</pre>");

@@ -96,6 +96,15 @@ impl JavaScriptAdapter {
             return Some("mocha");
         }
 
+        // AVA
+        if project_dir.join("ava.config.js").exists()
+            || project_dir.join("ava.config.cjs").exists()
+            || project_dir.join("ava.config.mjs").exists()
+            || content.contains("\"ava\"")
+        {
+            return Some("ava");
+        }
+
         None
     }
 }
@@ -146,6 +155,9 @@ impl TestAdapter for JavaScriptAdapter {
             "mocha" => {
                 cmd = build_js_runner_cmd(pkg_manager, "mocha");
             }
+            "ava" => {
+                cmd = build_js_runner_cmd(pkg_manager, "ava");
+            }
             _ => {
                 cmd = build_js_runner_cmd(pkg_manager, "jest");
             }
@@ -160,7 +172,7 @@ impl TestAdapter for JavaScriptAdapter {
     }
 
     fn parse_output(&self, stdout: &str, stderr: &str, exit_code: i32) -> TestRunResult {
-        let combined = format!("{}\n{}", stdout, stderr);
+        let combined = strip_ansi(&format!("{}\n{}", stdout, stderr));
         let failure_messages = parse_jest_failures(&combined);
         let mut suites: Vec<TestSuite> = Vec::new();
         let mut current_suite = String::new();
@@ -186,15 +198,18 @@ impl TestAdapter for JavaScriptAdapter {
                 continue;
             }
 
-            // Jest/Vitest test result: "  ✓ should work (5 ms)"  or  "  ✕ should fail (10 ms)"
-            // Also: "  ✓ should work" without timing
+            // Jest/Vitest/AVA test result lines
+            // Jest/Vitest: "✓ should work (5 ms)" / "✕ should fail"
+            // AVA: "✔ suite › test name" / "✘ [fail]: suite › test name Error"
             if trimmed.starts_with('✓')
                 || trimmed.starts_with('✕')
                 || trimmed.starts_with('○')
                 || trimmed.starts_with("√")
                 || trimmed.starts_with("×")
+                || trimmed.starts_with('✔')
+                || trimmed.starts_with('✘')
             {
-                let status = if trimmed.starts_with('✓') || trimmed.starts_with("√") {
+                let status = if trimmed.starts_with('✓') || trimmed.starts_with("√") || trimmed.starts_with('✔') {
                     TestStatus::Passed
                 } else if trimmed.starts_with('○') {
                     TestStatus::Skipped
@@ -202,7 +217,9 @@ impl TestAdapter for JavaScriptAdapter {
                     TestStatus::Failed
                 };
 
-                let rest = &trimmed[trimmed.char_indices().nth(1).map(|(i, _)| i).unwrap_or(1)..];
+                let rest = &trimmed[trimmed.char_indices().nth(1).map(|(i, _)| i).unwrap_or(1)..].trim_start();
+                // AVA failure format: "[fail]: suite › test Error msg" — strip "[fail]: " prefix
+                let rest = rest.strip_prefix("[fail]: ").unwrap_or(rest);
                 let (name, duration) = parse_jest_test_line(rest);
 
                 let error = if status == TestStatus::Failed {
@@ -224,10 +241,11 @@ impl TestAdapter for JavaScriptAdapter {
             }
 
             // Vitest format: "  ✓ module > test name 5ms"
-            if (trimmed.contains(" ✓ ") || trimmed.contains(" ✕ ") || trimmed.contains(" × "))
+            if (trimmed.contains(" ✓ ") || trimmed.contains(" ✕ ") || trimmed.contains(" × ")
+                || trimmed.contains(" ✔ ") || trimmed.contains(" ✘ "))
                 && !trimmed.starts_with("Test")
             {
-                let status = if trimmed.contains(" ✓ ") {
+                let status = if trimmed.contains(" ✓ ") || trimmed.contains(" ✔ ") {
                     TestStatus::Passed
                 } else {
                     TestStatus::Failed
@@ -237,8 +255,12 @@ impl TestAdapter for JavaScriptAdapter {
                     .replace(" ✓ ", "")
                     .replace(" ✕ ", "")
                     .replace(" × ", "")
+                    .replace(" ✔ ", "")
+                    .replace(" ✘ ", "")
                     .trim()
                     .to_string();
+                // Strip AVA "[fail]: " prefix
+                let name = name.strip_prefix("[fail]: ").map(|s| s.to_string()).unwrap_or(name);
 
                 let error = if status == TestStatus::Failed {
                     failure_messages.get(&name).map(|msg| super::TestError {
@@ -274,6 +296,16 @@ impl TestAdapter for JavaScriptAdapter {
         // Fallback: parse summary line
         if suites.is_empty() {
             suites.push(parse_jest_summary(&combined, exit_code));
+        } else {
+            // If we parsed individual lines, but a summary line shows more tests,
+            // prefer the summary (this handles vitest default output where ✓ lines are
+            // file-level, not test-level)
+            let summary = parse_jest_summary(&combined, exit_code);
+            let inline_total: usize = suites.iter().map(|s| s.tests.len()).sum();
+            let summary_total = summary.tests.len();
+            if summary_total > inline_total && summary_total > 1 {
+                suites = vec![summary];
+            }
         }
 
         let duration = parse_jest_duration(&combined).unwrap_or(Duration::from_secs(0));
@@ -312,11 +344,12 @@ fn parse_jest_test_line(line: &str) -> (String, Duration) {
 
 fn parse_jest_summary(output: &str, exit_code: i32) -> TestSuite {
     let mut tests = Vec::new();
-    // Look for "Tests:  X passed, Y failed, Z total"
     for line in output.lines() {
-        if line.contains("Tests:") && line.contains("total") {
-            // Strip the "Tests:" prefix before splitting
-            let after_label = line.split("Tests:").nth(1).unwrap_or(line);
+        let trimmed = line.trim();
+
+        // Jest format: "Tests:  X passed, Y failed, Z total"
+        if trimmed.contains("Tests:") && trimmed.contains("total") {
+            let after_label = trimmed.split("Tests:").nth(1).unwrap_or(trimmed);
             for part in after_label.split(',') {
                 let part = part.trim();
                 if let Some(n) = part
@@ -351,7 +384,76 @@ fn parse_jest_summary(output: &str, exit_code: i32) -> TestSuite {
                     }
                 }
             }
+            continue;
         }
+
+        // Vitest format: "Tests  3575 passed (3575)" or "Tests  10 failed | 3565 passed (3575)"
+        if (trimmed.starts_with("Tests") || trimmed.starts_with("Tests "))
+            && !trimmed.contains(":")
+            && (trimmed.contains("passed") || trimmed.contains("failed"))
+        {
+            // Split by | for multi-status: "10 failed | 3565 passed (3575)"
+            let after_tests = trimmed.trim_start_matches("Tests").trim();
+            for segment in after_tests.split('|') {
+                let segment = segment.trim();
+                // Extract "N status" pairs
+                let words: Vec<&str> = segment.split_whitespace().collect();
+                for w in words.windows(2) {
+                    if let Ok(n) = w[0].parse::<usize>() {
+                        let status_word = w[1].trim_end_matches(')');
+                        let status = if status_word.contains("passed") {
+                            TestStatus::Passed
+                        } else if status_word.contains("failed") {
+                            TestStatus::Failed
+                        } else if status_word.contains("skipped") || status_word.contains("todo") {
+                            TestStatus::Skipped
+                        } else {
+                            continue;
+                        };
+                        for i in 0..n {
+                            tests.push(TestCase {
+                                name: format!(
+                                    "{}_{}",
+                                    if status == TestStatus::Passed { "test" } else { "failed" },
+                                    tests.len() + i + 1
+                                ),
+                                status: status.clone(),
+                                duration: Duration::from_millis(0),
+                                error: None,
+                            });
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+
+        // AVA format: "30 tests failed" or "5 tests passed" or "2 known failures"
+        if (trimmed.contains("tests passed") || trimmed.contains("tests failed")
+            || trimmed.contains("test passed") || trimmed.contains("test failed"))
+            && let Some(n) = trimmed
+                .split_whitespace()
+                .next()
+                .and_then(|s| s.parse::<usize>().ok())
+        {
+                let status = if trimmed.contains("passed") {
+                    TestStatus::Passed
+                } else {
+                    TestStatus::Failed
+                };
+                for i in 0..n {
+                    tests.push(TestCase {
+                        name: format!(
+                            "{}_{}",
+                            if status == TestStatus::Passed { "test" } else { "failed" },
+                            tests.len() + i + 1
+                        ),
+                        status: status.clone(),
+                        duration: Duration::from_millis(0),
+                        error: None,
+                    });
+                }
+            }
     }
 
     if tests.is_empty() {
@@ -446,10 +548,11 @@ fn parse_jest_failures(output: &str) -> std::collections::HashMap<String, String
 }
 
 fn parse_jest_duration(output: &str) -> Option<Duration> {
-    // "Time:  1.234 s" or "Time:  123 ms"
     for line in output.lines() {
-        if line.contains("Time:") {
-            let parts: Vec<&str> = line.split_whitespace().collect();
+        let trimmed = line.trim();
+        // Jest: "Time:  1.234 s" or "Time:  123 ms"
+        if trimmed.contains("Time:") {
+            let parts: Vec<&str> = trimmed.split_whitespace().collect();
             for (i, part) in parts.iter().enumerate() {
                 if let Ok(n) = part.parse::<f64>()
                     && let Some(unit) = parts.get(i + 1)
@@ -462,8 +565,45 @@ fn parse_jest_duration(output: &str) -> Option<Duration> {
                 }
             }
         }
+        // Vitest: "Duration  30.18s (transform 24.34s, ...)" 
+        if trimmed.starts_with("Duration") && !trimmed.contains(":")
+            && let Some(dur_str) = trimmed
+                .strip_prefix("Duration")
+                .and_then(|s| s.split_whitespace().next())
+        {
+            if let Some(secs) = dur_str.strip_suffix('s').and_then(|s| s.parse::<f64>().ok()) {
+                return Some(Duration::from_secs_f64(secs));
+            } else if let Some(ms) = dur_str.strip_suffix("ms").and_then(|s| s.parse::<f64>().ok()) {
+                return Some(Duration::from_millis(ms as u64));
+            }
+        }
     }
     None
+}
+
+/// Strip ANSI escape codes from text. Handles CSI sequences like \x1b[32m.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' {
+            // Skip CSI sequence: ESC [ ... (letter)
+            if let Some(next) = chars.next()
+                && next == '['
+            {
+                // Consume until a letter (A-Z, a-z) terminates the sequence
+                for c in chars.by_ref() {
+                    if c.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+            // else: non-CSI escape, skip the next char
+        } else {
+            out.push(ch);
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -732,5 +872,79 @@ Time:        0.5 s
         std::fs::write(dir.path().join("index.js"), "console.log('hi')").unwrap();
         let adapter = JavaScriptAdapter::new();
         assert!(adapter.detect(dir.path()).is_none());
+    }
+
+    #[test]
+    fn parse_ava_output() {
+        let stdout = "  ✔ body-size › returns 0 for null\n  ✔ body-size › returns correct size\n  ✘ [fail]: browser › request fails Rejected promise\n\n  1 test failed\n";
+        let adapter = JavaScriptAdapter::new();
+        let result = adapter.parse_output(stdout, "", 1);
+
+        assert_eq!(result.total_passed(), 2);
+        assert_eq!(result.total_failed(), 1);
+        assert_eq!(result.total_tests(), 3);
+    }
+
+    #[test]
+    fn parse_ava_checkmark_chars() {
+        // ✔ = U+2714, ✘ = U+2718 (different from Jest ✓/✕)
+        let stdout = "✔ test_one\n✘ test_two\n";
+        let adapter = JavaScriptAdapter::new();
+        let result = adapter.parse_output(stdout, "", 1);
+
+        assert_eq!(result.total_passed(), 1);
+        assert_eq!(result.total_failed(), 1);
+    }
+
+    #[test]
+    fn parse_vitest_summary_format() {
+        // Vitest: "Tests  3575 passed (3575)"
+        let stdout = " Test Files  323 passed (323)\n      Tests  3575 passed (3575)\n   Start at  12:24:03\n   Duration  30.18s\n";
+        let adapter = JavaScriptAdapter::new();
+        let result = adapter.parse_output(stdout, "", 0);
+
+        assert_eq!(result.total_passed(), 3575);
+        assert!(result.is_success());
+    }
+
+    #[test]
+    fn parse_vitest_mixed_summary() {
+        let stdout = "      Tests  10 failed | 3565 passed (3575)\n   Duration  30.18s\n";
+        let adapter = JavaScriptAdapter::new();
+        let result = adapter.parse_output(stdout, "", 1);
+
+        assert_eq!(result.total_passed(), 3565);
+        assert_eq!(result.total_failed(), 10);
+        assert_eq!(result.total_tests(), 3575);
+    }
+
+    #[test]
+    fn parse_vitest_duration_format() {
+        assert_eq!(
+            parse_jest_duration("   Duration  30.18s (transform 24.34s, setup 16.70s)"),
+            Some(Duration::from_millis(30180))
+        );
+    }
+
+    #[test]
+    fn parse_ava_summary_fallback() {
+        let stdout = "  30 tests failed\n  2 known failures\n";
+        let adapter = JavaScriptAdapter::new();
+        let result = adapter.parse_output(stdout, "", 1);
+
+        assert_eq!(result.total_failed(), 30);
+    }
+
+    #[test]
+    fn detect_ava_project() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"devDependencies":{"ava":"^6"}}"#,
+        )
+        .unwrap();
+        let adapter = JavaScriptAdapter::new();
+        let det = adapter.detect(dir.path()).unwrap();
+        assert_eq!(det.framework, "ava");
     }
 }
