@@ -206,11 +206,21 @@ pub fn analyze_impact(
     let changed_files = get_changed_files(project_dir, mode)?;
     let extensions = LanguageExtensions::new();
 
+    // Paths to exclude from impact analysis (build artifacts, cache, etc.)
+    let excluded_prefixes: &[&str] = &[".testx/", ".testx\\"];
+
     let mut relevant_files = Vec::new();
     let mut irrelevant_files = Vec::new();
     let mut affected_set: HashSet<String> = HashSet::new();
 
     for file in &changed_files {
+        // Skip excluded paths
+        let path_str = file.to_string_lossy();
+        if excluded_prefixes.iter().any(|p| path_str.starts_with(p)) {
+            irrelevant_files.push(file.clone());
+            continue;
+        }
+
         let ext = file
             .extension()
             .and_then(|e| e.to_str())

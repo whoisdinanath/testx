@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
+use super::util::duration_from_secs_safe;
 use super::{DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus, TestSuite};
 
 pub struct JavaAdapter;
@@ -397,7 +398,7 @@ fn parse_java_duration(output: &str) -> Option<Duration> {
                 .take_while(|c| c.is_ascii_digit() || *c == '.')
                 .collect();
             if let Ok(secs) = num_str.parse::<f64>() {
-                return Some(Duration::from_secs_f64(secs));
+                return Some(duration_from_secs_safe(secs));
             }
         }
         // Gradle: "BUILD SUCCESSFUL in 2s" or "BUILD FAILED in 1s"
@@ -412,7 +413,7 @@ fn parse_java_duration(output: &str) -> Option<Duration> {
                 .take_while(|c| c.is_ascii_digit() || *c == '.')
                 .collect();
             if let Ok(secs) = num_str.parse::<f64>() {
-                return Some(Duration::from_secs_f64(secs));
+                return Some(duration_from_secs_safe(secs));
             }
         }
     }
@@ -826,7 +827,7 @@ fn parse_single_surefire_xml(content: &str) -> Option<TestSuite> {
         let time_str = extract_xml_attr(tc_text, "testcase", "time").unwrap_or_default();
         let duration = time_str
             .parse::<f64>()
-            .map(Duration::from_secs_f64)
+            .map(duration_from_secs_safe)
             .unwrap_or(Duration::from_millis(0));
 
         let (status, error) = if is_self_closing {

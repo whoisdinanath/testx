@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
+use super::util::duration_from_secs_safe;
 use super::{DetectionResult, TestAdapter, TestCase, TestRunResult, TestStatus, TestSuite};
 
 pub struct RustAdapter;
@@ -205,7 +206,7 @@ fn parse_cargo_duration(output: &str) -> Option<Duration> {
                 .take_while(|c| c.is_ascii_digit() || *c == '.')
                 .collect();
             if let Ok(secs) = num_str.parse::<f64>() {
-                return Some(Duration::from_secs_f64(secs));
+                return Some(duration_from_secs_safe(secs));
             }
         }
     }

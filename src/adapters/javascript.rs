@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
+use super::util::duration_from_secs_safe;
 use super::{DetectionResult, TestAdapter, TestCase, TestRunResult, TestStatus, TestSuite};
 
 /// Build a Command to run a JS tool via the detected package manager.
@@ -335,7 +336,7 @@ fn parse_jest_test_line(line: &str) -> (String, Duration) {
         let duration = if timing.contains("ms") {
             Duration::from_millis(ms as u64)
         } else {
-            Duration::from_secs_f64(ms)
+            duration_from_secs_safe(ms)
         };
         return (name, duration);
     }
@@ -558,7 +559,7 @@ fn parse_jest_duration(output: &str) -> Option<Duration> {
                     && let Some(unit) = parts.get(i + 1)
                 {
                     if unit.starts_with('s') {
-                        return Some(Duration::from_secs_f64(n));
+                        return Some(duration_from_secs_safe(n));
                     } else if unit.starts_with("ms") {
                         return Some(Duration::from_millis(n as u64));
                     }
@@ -572,7 +573,7 @@ fn parse_jest_duration(output: &str) -> Option<Duration> {
                 .and_then(|s| s.split_whitespace().next())
         {
             if let Some(secs) = dur_str.strip_suffix('s').and_then(|s| s.parse::<f64>().ok()) {
-                return Some(Duration::from_secs_f64(secs));
+                return Some(duration_from_secs_safe(secs));
             } else if let Some(ms) = dur_str.strip_suffix("ms").and_then(|s| s.parse::<f64>().ok()) {
                 return Some(Duration::from_millis(ms as u64));
             }

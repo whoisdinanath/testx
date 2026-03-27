@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
+use super::util::duration_from_secs_safe;
 use super::{DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus, TestSuite};
 
 pub struct CppAdapter;
@@ -246,7 +247,7 @@ fn parse_ctest_line(line: &str) -> (String, TestStatus, Duration) {
             .collect();
         num_str
             .parse::<f64>()
-            .map(Duration::from_secs_f64)
+            .map(duration_from_secs_safe)
             .unwrap_or(Duration::from_millis(0))
     } else {
         Duration::from_millis(0)
@@ -292,7 +293,7 @@ fn parse_ctest_duration(output: &str) -> Option<Duration> {
                 .take_while(|c| c.is_ascii_digit() || *c == '.')
                 .collect();
             if let Ok(secs) = num_str.parse::<f64>() {
-                return Some(Duration::from_secs_f64(secs));
+                return Some(duration_from_secs_safe(secs));
             }
         }
     }

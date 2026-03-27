@@ -84,8 +84,11 @@ impl Plugin for NotifyReporter {
         let notification = build_notification(result, &self.config);
         self.last_notification = Some(notification.clone());
 
-        // Best-effort send — don't fail the whole pipeline if notification fails
-        let _ = send_notification(&notification, &self.config);
+        // Best-effort send — don't fire real notifications during tests
+        #[cfg(not(test))]
+        {
+            let _ = send_notification(&notification, &self.config);
+        }
         Ok(())
     }
 }

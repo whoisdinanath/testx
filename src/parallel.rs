@@ -602,8 +602,13 @@ impl ProgressMonitor {
         let elapsed = self.elapsed();
         let rate = completed as f64 / elapsed.as_secs_f64();
         let remaining = self.total_tests.saturating_sub(completed) as f64;
+        let estimate = remaining / rate;
 
-        Some(Duration::from_secs_f64(remaining / rate))
+        if estimate.is_finite() && estimate >= 0.0 {
+            Some(Duration::from_secs_f64(estimate))
+        } else {
+            None
+        }
     }
 }
 

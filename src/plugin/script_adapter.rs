@@ -6,6 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::adapters::util::duration_from_secs_safe;
 use crate::adapters::{TestCase, TestError, TestRunResult, TestStatus, TestSuite};
 
 /// Output parser type for a script adapter.
@@ -251,7 +252,7 @@ fn parse_json_test(value: &serde_json::Value) -> Option<TestCase> {
     let duration = value
         .get("duration")
         .and_then(|v| v.as_f64())
-        .map(|ms| Duration::from_secs_f64(ms / 1000.0))
+        .map(|ms| duration_from_secs_safe(ms / 1000.0))
         .unwrap_or(Duration::ZERO);
 
     let error = value.get("error").and_then(|v| {
@@ -325,7 +326,7 @@ fn parse_junit_testcases(xml: &str) -> Vec<TestCase> {
             let name = extract_xml_attr(trimmed, "name").unwrap_or_else(|| "unknown".to_string());
             let time = extract_xml_attr(trimmed, "time")
                 .and_then(|t| t.parse::<f64>().ok())
-                .map(Duration::from_secs_f64)
+                .map(duration_from_secs_safe)
                 .unwrap_or(Duration::ZERO);
 
             // Check for failure/error/skipped in subsequent lines
@@ -648,7 +649,7 @@ fn try_regex_match(
         .duration_group
         .and_then(|g| captures.get(g.saturating_sub(1)))
         .and_then(|d| d.parse::<f64>().ok())
-        .map(|ms| Duration::from_secs_f64(ms / 1000.0))
+        .map(|ms| duration_from_secs_safe(ms / 1000.0))
         .unwrap_or(Duration::ZERO);
 
     Some(TestCase {

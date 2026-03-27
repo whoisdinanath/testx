@@ -5,6 +5,16 @@ use crate::adapters::{
     DetectionResult, TestCase, TestError, TestRunResult, TestStatus, TestSuite,
 };
 
+/// Create a Duration from seconds, returning Duration::ZERO for NaN, infinity, or negative values.
+/// This is a safe wrapper around `Duration::from_secs_f64` which panics on such inputs.
+pub fn duration_from_secs_safe(secs: f64) -> Duration {
+    if secs.is_finite() && secs >= 0.0 {
+        Duration::from_secs_f64(secs)
+    } else {
+        Duration::ZERO
+    }
+}
+
 /// Combine stdout and stderr into a single string for parsing.
 pub fn combined_output(stdout: &str, stderr: &str) -> String {
     let stdout = stdout.trim();
@@ -148,7 +158,7 @@ pub fn parse_duration_str(s: &str) -> Option<Duration> {
         .map(|n| n.trim())
         .and_then(|n| n.parse::<f64>().ok())
     {
-        return Some(Duration::from_secs_f64(num / 1000.0));
+        return Some(duration_from_secs_safe(num / 1000.0));
     }
 
     // Try seconds: "1.5s", "0.01 sec", "1.23 seconds"
@@ -160,7 +170,7 @@ pub fn parse_duration_str(s: &str) -> Option<Duration> {
         .map(|n| n.trim());
 
     if let Some(num) = s_stripped.and_then(|n| n.parse::<f64>().ok()) {
-        return Some(Duration::from_secs_f64(num));
+        return Some(duration_from_secs_safe(num));
     }
 
     // Try minutes: "2m30s", "1.5 min"
@@ -170,7 +180,7 @@ pub fn parse_duration_str(s: &str) -> Option<Duration> {
         .map(|n| n.trim())
         .and_then(|n| n.parse::<f64>().ok())
     {
-        return Some(Duration::from_secs_f64(num * 60.0));
+        return Some(duration_from_secs_safe(num * 60.0));
     }
 
     None

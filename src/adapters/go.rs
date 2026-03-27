@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
+use super::util::duration_from_secs_safe;
 use super::{DetectionResult, TestAdapter, TestCase, TestRunResult, TestStatus, TestSuite};
 
 pub struct GoAdapter;
@@ -110,7 +111,7 @@ impl TestAdapter for GoAdapter {
                         let s = s.trim_matches(|c| c == '(' || c == ')' || c == 's');
                         s.parse::<f64>().ok()
                     })
-                    .map(Duration::from_secs_f64)
+                    .map(duration_from_secs_safe)
                     .unwrap_or(Duration::from_millis(0));
 
                 let error = if status == TestStatus::Failed {
@@ -279,7 +280,7 @@ fn parse_go_total_duration(output: &str) -> Option<Duration> {
             if let Some(time_str) = parts.last() {
                 let time_str = time_str.trim().trim_end_matches('s');
                 if let Ok(secs) = time_str.parse::<f64>() {
-                    total += Duration::from_secs_f64(secs);
+                    total += duration_from_secs_safe(secs);
                     found = true;
                 }
             }

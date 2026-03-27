@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
+use super::util::duration_from_secs_safe;
 use super::{
     DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus, TestSuite,
 };
@@ -372,7 +373,7 @@ fn parse_ruby_duration(output: &str) -> Option<Duration> {
                 .take_while(|c| c.is_ascii_digit() || *c == '.')
                 .collect();
             if let Ok(secs) = num_str.parse::<f64>() {
-                return Some(Duration::from_secs_f64(secs));
+                return Some(duration_from_secs_safe(secs));
             }
         }
         // Minitest: "Finished in 0.001234s,"
@@ -387,7 +388,7 @@ fn parse_ruby_duration(output: &str) -> Option<Duration> {
                 .take_while(|c| c.is_ascii_digit() || *c == '.')
                 .collect();
             if let Ok(secs) = num_str.parse::<f64>() {
-                return Some(Duration::from_secs_f64(secs));
+                return Some(duration_from_secs_safe(secs));
             }
         }
     }
@@ -545,7 +546,7 @@ fn parse_rspec_inline_duration(s: &str) -> Duration {
         .take_while(|c| c.is_ascii_digit() || *c == '.')
         .collect();
     if let Ok(secs) = num_str.parse::<f64>() {
-        Duration::from_secs_f64(secs)
+        duration_from_secs_safe(secs)
     } else {
         Duration::from_millis(0)
     }
@@ -606,7 +607,7 @@ fn parse_minitest_verbose_result(s: &str) -> (Duration, TestStatus) {
             .collect();
         num_str
             .parse::<f64>()
-            .map(Duration::from_secs_f64)
+            .map(duration_from_secs_safe)
             .unwrap_or(Duration::from_millis(0))
     } else {
         Duration::from_millis(0)

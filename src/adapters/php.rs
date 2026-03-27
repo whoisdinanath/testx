@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
+use super::util::duration_from_secs_safe;
 use super::{DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus, TestSuite};
 
 pub struct PhpAdapter;
@@ -239,7 +240,7 @@ fn parse_phpunit_duration(output: &str) -> Option<Duration> {
             if let Some(colon_idx) = time_str.find(':') {
                 let mins: f64 = time_str[..colon_idx].parse().unwrap_or(0.0);
                 let secs: f64 = time_str[colon_idx + 1..].parse().unwrap_or(0.0);
-                return Some(Duration::from_secs_f64(mins * 60.0 + secs));
+                return Some(duration_from_secs_safe(mins * 60.0 + secs));
             }
         }
     }
@@ -392,10 +393,10 @@ fn extract_testdox_duration(name: &str) -> (String, Duration) {
 fn parse_testdox_duration_str(s: &str) -> Option<Duration> {
     if let Some(rest) = s.strip_suffix("ms") {
         let val: f64 = rest.trim().parse().ok()?;
-        Some(Duration::from_secs_f64(val / 1000.0))
+        Some(duration_from_secs_safe(val / 1000.0))
     } else if let Some(rest) = s.strip_suffix('s') {
         let val: f64 = rest.trim().parse().ok()?;
-        Some(Duration::from_secs_f64(val))
+        Some(duration_from_secs_safe(val))
     } else {
         None
     }

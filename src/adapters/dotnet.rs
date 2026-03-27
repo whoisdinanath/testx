@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
+use super::util::duration_from_secs_safe;
 use super::{DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus, TestSuite};
 
 pub struct DotnetAdapter;
@@ -252,8 +253,8 @@ fn parse_dotnet_test_duration(dur_str: &str) -> Duration {
     if parts.len() >= 2 {
         let value: f64 = parts[0].parse().unwrap_or(0.0);
         match parts[1] {
-            "ms" => Duration::from_secs_f64(value / 1000.0),
-            "s" => Duration::from_secs_f64(value),
+            "ms" => duration_from_secs_safe(value / 1000.0),
+            "s" => duration_from_secs_safe(value),
             _ => Duration::from_millis(0),
         }
     } else {
@@ -271,7 +272,7 @@ fn parse_dotnet_duration(output: &str) -> Option<Duration> {
                 .filter(|c| c.is_ascii_digit() || *c == '.')
                 .collect();
             if let Ok(secs) = num_str.parse::<f64>() {
-                return Some(Duration::from_secs_f64(secs));
+                return Some(duration_from_secs_safe(secs));
             }
         }
     }
@@ -607,7 +608,7 @@ fn parse_trx_duration(s: &str) -> Duration {
         let hours: f64 = parts[0].parse().unwrap_or(0.0);
         let mins: f64 = parts[1].parse().unwrap_or(0.0);
         let secs: f64 = parts[2].parse().unwrap_or(0.0);
-        Duration::from_secs_f64(hours * 3600.0 + mins * 60.0 + secs)
+        duration_from_secs_safe(hours * 3600.0 + mins * 60.0 + secs)
     } else {
         Duration::from_millis(0)
     }

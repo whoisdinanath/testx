@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
+use super::util::duration_from_secs_safe;
 use super::{DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus, TestSuite};
 
 pub struct ElixirAdapter;
@@ -190,7 +191,7 @@ fn parse_exunit_duration(output: &str) -> Option<Duration> {
                 .take_while(|c| c.is_ascii_digit() || *c == '.')
                 .collect();
             if let Ok(secs) = num_str.parse::<f64>() {
-                return Some(Duration::from_secs_f64(secs));
+                return Some(duration_from_secs_safe(secs));
             }
         }
     }
@@ -286,7 +287,7 @@ fn parse_trace_test_line(s: &str) -> (String, Duration, TestStatus) {
 
             if let Some(num) = time_str.strip_suffix("ms")
                 && let Ok(ms) = num.parse::<f64>() {
-                    duration = Duration::from_secs_f64(ms / 1000.0);
+                    duration = duration_from_secs_safe(ms / 1000.0);
                 }
 
             name = s[..paren_start].trim().to_string();
