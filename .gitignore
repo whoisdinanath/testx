@@ -1,9 +1,16 @@
 /target
 /sandbox
 /reps
+/.testx
+panic.txt
+.venv/
+site/
+
+# Editor / OS
 *.swp
 *.swo
 *~
 .DS_Store
 .idea/
-.vscode/.testx/
+.vscode/
+.playwright-mcp/

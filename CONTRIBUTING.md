@@ -17,7 +17,7 @@ Thank you for your interest in contributing to testx! This guide will help you g
 
 ### Prerequisites
 
-- Rust 1.74+
+- Rust 1.87+ (edition 2024)
 - Git
 
 ### Building

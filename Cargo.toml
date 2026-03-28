@@ -4,9 +4,12 @@ version = "0.1.0"
 edition = "2024"
 description = "One command. Any language. Beautiful tests."
 license = "MIT"
-repository = "https://github.com/bibekblockchain/testx"
+repository = "https://github.com/whoisdinanath/testx"
+homepage = "https://github.com/whoisdinanath/testx"
+readme = "README.md"
 keywords = ["testing", "test-runner", "cli", "developer-tools"]
 categories = ["development-tools::testing", "command-line-utilities"]
+exclude = ["sandbox/", "reps/", ".testx/", "benches/"]
 
 [dependencies]
 anyhow = "1.0.102"

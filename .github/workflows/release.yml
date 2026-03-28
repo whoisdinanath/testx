@@ -10,6 +10,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build:
@@ -22,21 +23,27 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             archive: tar.gz
+            artifact_name: linux-x86_64
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             archive: tar.gz
+            artifact_name: linux-x86_64-musl
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             archive: tar.gz
+            artifact_name: linux-aarch64
           - target: x86_64-apple-darwin
             os: macos-latest
             archive: tar.gz
+            artifact_name: macos-x86_64
           - target: aarch64-apple-darwin
             os: macos-latest
             archive: tar.gz
+            artifact_name: macos-aarch64
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             archive: zip
+            artifact_name: windows-x86_64
 
     steps:
       - uses: actions/checkout@v4
@@ -64,14 +71,14 @@ jobs:
         if: matrix.archive == 'tar.gz'
         run: |
           cd target/${{ matrix.target }}/release
-          tar czf ../../../testx-${{ github.ref_name }}-${{ matrix.target }}.tar.gz testx
+          tar czf ../../../testx-${{ github.ref_name }}-${{ matrix.artifact_name }}.tar.gz testx
           cd ../../..
 
       - name: Package (Windows)
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
-          Compress-Archive -Path target/${{ matrix.target }}/release/testx.exe -DestinationPath testx-${{ env.GITHUB_REF_NAME }}-${{ matrix.target }}.zip
+          Compress-Archive -Path target/${{ matrix.target }}/release/testx.exe -DestinationPath testx-${{ github.ref_name }}-${{ matrix.artifact_name }}.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -100,16 +107,4 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  publish:
-    name: Publish to crates.io
-    needs: release
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Publish
-        run: cargo publish
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
