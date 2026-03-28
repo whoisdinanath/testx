@@ -84,6 +84,17 @@ impl PythonAdapter {
         }
         None
     }
+
+    /// Find pytest binary inside a local virtualenv (.venv, venv, .env, env).
+    fn find_venv_pytest(project_dir: &Path) -> Option<std::path::PathBuf> {
+        for venv_dir in [".venv", "venv", ".env", "env"] {
+            let venv_pytest = project_dir.join(venv_dir).join("bin").join("pytest");
+            if venv_pytest.exists() {
+                return Some(venv_pytest);
+            }
+        }
+        None
+    }
 }
 
 impl TestAdapter for PythonAdapter {
@@ -151,7 +162,12 @@ impl TestAdapter for PythonAdapter {
                 cmd.arg("python").arg("-m").arg("unittest");
             }
         } else if is_pytest {
-            cmd = Command::new("pytest");
+            // Check for pytest inside a local virtualenv first
+            if let Some(venv_pytest) = Self::find_venv_pytest(project_dir) {
+                cmd = Command::new(venv_pytest);
+            } else {
+                cmd = Command::new("pytest");
+            }
         } else if is_django {
             cmd = Command::new("python");
             cmd.arg("manage.py").arg("test");
