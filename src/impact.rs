@@ -152,9 +152,18 @@ impl LanguageExtensions {
                 ("Rust", &["rs", "toml"]),
                 ("Go", &["go", "mod", "sum"]),
                 ("Python", &["py", "pyi", "cfg", "ini", "toml"]),
-                ("JavaScript", &["js", "jsx", "ts", "tsx", "mjs", "cjs", "json"]),
-                ("Java", &["java", "kt", "kts", "gradle", "xml", "properties"]),
-                ("C++", &["cpp", "cc", "cxx", "c", "h", "hpp", "hxx", "cmake"]),
+                (
+                    "JavaScript",
+                    &["js", "jsx", "ts", "tsx", "mjs", "cjs", "json"],
+                ),
+                (
+                    "Java",
+                    &["java", "kt", "kts", "gradle", "xml", "properties"],
+                ),
+                (
+                    "C++",
+                    &["cpp", "cc", "cxx", "c", "h", "hpp", "hxx", "cmake"],
+                ),
                 ("Ruby", &["rb", "rake", "gemspec"]),
                 ("Elixir", &["ex", "exs"]),
                 ("PHP", &["php", "xml"]),
@@ -199,10 +208,7 @@ pub struct ImpactAnalysis {
 }
 
 /// Analyze changed files to determine test impact.
-pub fn analyze_impact(
-    project_dir: &Path,
-    mode: &DiffMode,
-) -> Result<ImpactAnalysis> {
+pub fn analyze_impact(project_dir: &Path, mode: &DiffMode) -> Result<ImpactAnalysis> {
     let changed_files = get_changed_files(project_dir, mode)?;
     let extensions = LanguageExtensions::new();
 
@@ -221,10 +227,7 @@ pub fn analyze_impact(
             continue;
         }
 
-        let ext = file
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
+        let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("");
 
         if extensions.is_relevant_extension(ext) || is_config_file(file) {
             relevant_files.push(file.clone());
@@ -257,10 +260,7 @@ pub fn analyze_impact(
 
 /// Check if a file is a project config/build file.
 fn is_config_file(path: &Path) -> bool {
-    let filename = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
+    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
     matches!(
         filename,
@@ -434,7 +434,11 @@ mod tests {
         ];
 
         for (ext, adapter) in test_cases {
-            assert!(exts.is_relevant_extension(ext), "Extension {} should be relevant", ext);
+            assert!(
+                exts.is_relevant_extension(ext),
+                "Extension {} should be relevant",
+                ext
+            );
             let adapters = exts.adapters_for_extension(ext);
             assert!(
                 adapters.contains(&adapter),
@@ -495,10 +499,7 @@ mod tests {
     fn format_impact_with_relevant() {
         let analysis = ImpactAnalysis {
             total_changed: 5,
-            relevant_files: vec![
-                PathBuf::from("src/main.rs"),
-                PathBuf::from("src/lib.rs"),
-            ],
+            relevant_files: vec![PathBuf::from("src/main.rs"), PathBuf::from("src/lib.rs")],
             irrelevant_files: vec![
                 PathBuf::from("README.md"),
                 PathBuf::from("docs/api.md"),

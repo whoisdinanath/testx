@@ -23,19 +23,27 @@ impl ShardingMode {
             ),
         })?;
 
-        let (m_str, n_str) = spec.split_once('/').ok_or_else(|| TestxError::ConfigError {
+        let (m_str, n_str) = spec
+            .split_once('/')
+            .ok_or_else(|| TestxError::ConfigError {
+                message: format!(
+                    "Invalid partition spec '{}'. Expected 'M/N' where 1 <= M <= N",
+                    spec
+                ),
+            })?;
+
+        let m: usize = m_str.parse().map_err(|_| TestxError::ConfigError {
             message: format!(
-                "Invalid partition spec '{}'. Expected 'M/N' where 1 <= M <= N",
-                spec
+                "Invalid partition index '{}': must be a positive integer",
+                m_str
             ),
         })?;
 
-        let m: usize = m_str.parse().map_err(|_| TestxError::ConfigError {
-            message: format!("Invalid partition index '{}': must be a positive integer", m_str),
-        })?;
-
         let n: usize = n_str.parse().map_err(|_| TestxError::ConfigError {
-            message: format!("Invalid partition total '{}': must be a positive integer", n_str),
+            message: format!(
+                "Invalid partition total '{}': must be a positive integer",
+                n_str
+            ),
         })?;
 
         if n == 0 {
@@ -57,10 +65,7 @@ impl ShardingMode {
             "slice" => Ok(ShardingMode::Slice { index: m, total: n }),
             "hash" => Ok(ShardingMode::Hash { index: m, total: n }),
             other => Err(TestxError::ConfigError {
-                message: format!(
-                    "Unknown partition mode '{}'. Use 'slice' or 'hash'",
-                    other
-                ),
+                message: format!("Unknown partition mode '{}'. Use 'slice' or 'hash'", other),
             }),
         }
     }
@@ -213,7 +218,7 @@ pub fn compute_shard_stats(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::{TestStatus, TestError};
+    use crate::adapters::{TestError, TestStatus};
     use std::time::Duration;
 
     fn make_test(name: &str) -> TestCase {
@@ -287,7 +292,11 @@ mod tests {
 
         let mut all_test_names: Vec<String> = Vec::new();
         for i in 1..=total_shards {
-            let shard = ShardingMode::Slice { index: i, total: total_shards }.apply(&result);
+            let shard = ShardingMode::Slice {
+                index: i,
+                total: total_shards,
+            }
+            .apply(&result);
             for suite in &shard.suites {
                 for test in &suite.tests {
                     all_test_names.push(format!("{}::{}", suite.name, test.name));
@@ -299,7 +308,11 @@ mod tests {
         let mut expected_names: Vec<String> = result
             .suites
             .iter()
-            .flat_map(|s| s.tests.iter().map(move |t| format!("{}::{}", s.name, t.name)))
+            .flat_map(|s| {
+                s.tests
+                    .iter()
+                    .map(move |t| format!("{}::{}", s.name, t.name))
+            })
             .collect();
         expected_names.sort();
 
@@ -317,7 +330,11 @@ mod tests {
             let names: Vec<String> = shard
                 .suites
                 .iter()
-                .flat_map(|s| s.tests.iter().map(move |t| format!("{}::{}", s.name, t.name)))
+                .flat_map(|s| {
+                    s.tests
+                        .iter()
+                        .map(move |t| format!("{}::{}", s.name, t.name))
+                })
                 .collect();
             all.push(names);
         }
@@ -348,12 +365,20 @@ mod tests {
         let names_a: Vec<String> = shard1a
             .suites
             .iter()
-            .flat_map(|s| s.tests.iter().map(move |t| format!("{}::{}", s.name, t.name)))
+            .flat_map(|s| {
+                s.tests
+                    .iter()
+                    .map(move |t| format!("{}::{}", s.name, t.name))
+            })
             .collect();
         let names_b: Vec<String> = shard1b
             .suites
             .iter()
-            .flat_map(|s| s.tests.iter().map(move |t| format!("{}::{}", s.name, t.name)))
+            .flat_map(|s| {
+                s.tests
+                    .iter()
+                    .map(move |t| format!("{}::{}", s.name, t.name))
+            })
             .collect();
 
         assert_eq!(names_a, names_b);
@@ -378,7 +403,11 @@ mod tests {
         let mut expected: Vec<String> = result
             .suites
             .iter()
-            .flat_map(|s| s.tests.iter().map(move |t| format!("{}::{}", s.name, t.name)))
+            .flat_map(|s| {
+                s.tests
+                    .iter()
+                    .map(move |t| format!("{}::{}", s.name, t.name))
+            })
             .collect();
         expected.sort();
 
@@ -396,7 +425,11 @@ mod tests {
             let names: Vec<String> = shard
                 .suites
                 .iter()
-                .flat_map(|s| s.tests.iter().map(move |t| format!("{}::{}", s.name, t.name)))
+                .flat_map(|s| {
+                    s.tests
+                        .iter()
+                        .map(move |t| format!("{}::{}", s.name, t.name))
+                })
                 .collect();
             all.push(names);
         }
@@ -480,7 +513,11 @@ mod tests {
 
         // All original tests that were in shard 1 should still be there
         for name in &names1 {
-            assert!(names2.contains(name), "Test '{}' moved after addition", name);
+            assert!(
+                names2.contains(name),
+                "Test '{}' moved after addition",
+                name
+            );
         }
     }
 
@@ -501,7 +538,10 @@ mod tests {
             .collect();
 
         assert_eq!(failed.len(), 1);
-        assert_eq!(failed[0].error.as_ref().unwrap().message, "assertion failed");
+        assert_eq!(
+            failed[0].error.as_ref().unwrap().message,
+            "assertion failed"
+        );
     }
 
     #[test]

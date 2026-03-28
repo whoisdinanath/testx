@@ -50,58 +50,62 @@ pub fn parse_jacoco(content: &str) -> CoverageResult {
 
         // Track sourcefile
         if trimmed.starts_with("<sourcefile ")
-            && let Some(name) = extract_attr_value(trimmed, "name") {
-                current_sourcefile = Some(name);
-                line_hits.clear();
-                total_branches = 0;
-                covered_branches = 0;
-            }
+            && let Some(name) = extract_attr_value(trimmed, "name")
+        {
+            current_sourcefile = Some(name);
+            line_hits.clear();
+            total_branches = 0;
+            covered_branches = 0;
+        }
 
         // Parse line data
-        if trimmed.starts_with("<line ") && current_sourcefile.is_some()
+        if trimmed.starts_with("<line ")
+            && current_sourcefile.is_some()
             && let Some(nr) = extract_attr_value(trimmed, "nr")
-                && let Ok(line_num) = nr.parse::<usize>() {
-                    // ci = covered instructions, mi = missed instructions
-                    let ci: u64 = extract_attr_value(trimmed, "ci")
-                        .and_then(|v| v.parse().ok())
-                        .unwrap_or(0);
-                    line_hits.insert(line_num, ci);
+            && let Ok(line_num) = nr.parse::<usize>()
+        {
+            // ci = covered instructions, mi = missed instructions
+            let ci: u64 = extract_attr_value(trimmed, "ci")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            line_hits.insert(line_num, ci);
 
-                    // mb = missed branches, cb = covered branches
-                    let mb: usize = extract_attr_value(trimmed, "mb")
-                        .and_then(|v| v.parse().ok())
-                        .unwrap_or(0);
-                    let cb: usize = extract_attr_value(trimmed, "cb")
-                        .and_then(|v| v.parse().ok())
-                        .unwrap_or(0);
-                    total_branches += mb + cb;
-                    covered_branches += cb;
-                }
+            // mb = missed branches, cb = covered branches
+            let mb: usize = extract_attr_value(trimmed, "mb")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let cb: usize = extract_attr_value(trimmed, "cb")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            total_branches += mb + cb;
+            covered_branches += cb;
+        }
 
         // End of sourcefile
         if (trimmed == "</sourcefile>" || trimmed.starts_with("</sourcefile>"))
-            && let Some(name) = current_sourcefile.take() {
-                let path = match &current_package {
-                    Some(pkg) => PathBuf::from(pkg).join(&name),
-                    None => PathBuf::from(&name),
-                };
+            && let Some(name) = current_sourcefile.take()
+        {
+            let path = match &current_package {
+                Some(pkg) => PathBuf::from(pkg).join(&name),
+                None => PathBuf::from(&name),
+            };
 
-                let total_lines = line_hits.len();
-                let covered_lines = line_hits.values().filter(|&&c| c > 0).count();
+            let total_lines = line_hits.len();
+            let covered_lines = line_hits.values().filter(|&&c| c > 0).count();
 
-                files.push(FileCoverage {
-                    path,
-                    total_lines,
-                    covered_lines,
-                    uncovered_ranges: Vec::new(),
-                    line_hits: line_hits.clone(),
-                    total_branches,
-                    covered_branches,
-                });
-                line_hits.clear();
-                total_branches = 0;
-                covered_branches = 0;
-            }
+            files.push(FileCoverage {
+                path,
+                total_lines,
+                covered_lines,
+                uncovered_ranges: Vec::new(),
+                line_hits: line_hits.clone(),
+                total_branches,
+                covered_branches,
+            });
+            line_hits.clear();
+            total_branches = 0;
+            covered_branches = 0;
+        }
     }
 
     CoverageResult::from_files(files)

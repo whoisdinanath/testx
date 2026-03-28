@@ -5,7 +5,9 @@ use std::time::Duration;
 use anyhow::Result;
 
 use super::util::duration_from_secs_safe;
-use super::{DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus, TestSuite};
+use super::{
+    DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus, TestSuite,
+};
 
 pub struct JavaAdapter;
 
@@ -608,7 +610,13 @@ fn parse_gradle_failures(output: &str) -> Vec<JavaTestFailure> {
             let stack_trace = if stack_lines.is_empty() {
                 None
             } else {
-                Some(stack_lines.into_iter().take(5).collect::<Vec<_>>().join("\n"))
+                Some(
+                    stack_lines
+                        .into_iter()
+                        .take(5)
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                )
             };
 
             failures.push(JavaTestFailure {
@@ -772,11 +780,13 @@ pub fn parse_surefire_xml(project_dir: &Path) -> Vec<TestSuite> {
             for entry in entries.flatten() {
                 let name = entry.file_name();
                 let name = name.to_string_lossy();
-                if name.starts_with("TEST-") && name.ends_with(".xml")
+                if name.starts_with("TEST-")
+                    && name.ends_with(".xml")
                     && let Ok(content) = std::fs::read_to_string(entry.path())
-                        && let Some(suite) = parse_single_surefire_xml(&content) {
-                            suites.push(suite);
-                        }
+                    && let Some(suite) = parse_single_surefire_xml(&content)
+                {
+                    suites.push(suite);
+                }
             }
         }
     }
@@ -823,7 +833,8 @@ fn parse_single_surefire_xml(content: &str) -> Option<TestSuite> {
 
         let tc_text = &content[absolute_start..tc_end];
 
-        let name = extract_xml_attr(tc_text, "testcase", "name").unwrap_or_else(|| "unknown".into());
+        let name =
+            extract_xml_attr(tc_text, "testcase", "name").unwrap_or_else(|| "unknown".into());
         let time_str = extract_xml_attr(tc_text, "testcase", "time").unwrap_or_default();
         let duration = time_str
             .parse::<f64>()
@@ -1149,8 +1160,7 @@ com.example.StringTest > testLower FAILED
 
     #[test]
     fn parse_maven_failure_line_no_message() {
-        let failure =
-            parse_maven_failure_line("testAdd(com.example.MathTest)").unwrap();
+        let failure = parse_maven_failure_line("testAdd(com.example.MathTest)").unwrap();
         assert_eq!(failure.method_name, "testAdd");
         assert!(failure.message.is_empty());
     }
@@ -1297,12 +1307,14 @@ com.example.Test > methodB FAILED
 </testsuite>"#;
         let suite = parse_single_surefire_xml(xml).unwrap();
         assert_eq!(suite.tests[0].status, TestStatus::Failed);
-        assert!(suite.tests[0]
-            .error
-            .as_ref()
-            .unwrap()
-            .message
-            .contains("NullPointerException"));
+        assert!(
+            suite.tests[0]
+                .error
+                .as_ref()
+                .unwrap()
+                .message
+                .contains("NullPointerException")
+        );
     }
 
     #[test]
@@ -1325,7 +1337,10 @@ com.example.Test > methodB FAILED
 
     #[test]
     fn xml_unescape_test() {
-        assert_eq!(xml_unescape("expected:&lt;4&gt; but was:&lt;3&gt;"), "expected:<4> but was:<3>");
+        assert_eq!(
+            xml_unescape("expected:&lt;4&gt; but was:&lt;3&gt;"),
+            "expected:<4> but was:<3>"
+        );
         assert_eq!(xml_unescape("&amp;&quot;&apos;"), "&\"'");
     }
 

@@ -30,7 +30,9 @@ pub fn supported_shells() -> &'static [Shell] {
 pub fn install_hint(shell: Shell) -> &'static str {
     match shell {
         Shell::Bash => "testx completions bash > ~/.local/share/bash-completion/completions/testx",
-        Shell::Zsh => "testx completions zsh > ~/.zfunc/_testx && echo 'fpath+=~/.zfunc' >> ~/.zshrc",
+        Shell::Zsh => {
+            "testx completions zsh > ~/.zfunc/_testx && echo 'fpath+=~/.zfunc' >> ~/.zshrc"
+        }
         Shell::Fish => "testx completions fish > ~/.config/fish/completions/testx.fish",
         Shell::PowerShell => "testx completions powershell > _testx.ps1",
         _ => "testx completions <shell> > <output-file>",

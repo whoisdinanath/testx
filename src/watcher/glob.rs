@@ -9,9 +9,9 @@ pub struct GlobPattern {
 #[derive(Debug, Clone)]
 enum GlobPart {
     Literal(String),
-    Star,        // * — matches anything except /
-    DoubleStar,  // ** — matches anything including /
-    Question,    // ? — matches single char
+    Star,       // * — matches anything except /
+    DoubleStar, // ** — matches anything including /
+    Question,   // ? — matches single char
 }
 
 impl GlobPattern {
@@ -78,9 +78,10 @@ impl GlobPattern {
     pub fn matches_filename(&self, path: &str) -> bool {
         // If pattern contains no path separator, match against filename only
         if !self.pattern.contains('/')
-            && let Some(filename) = path.rsplit('/').next() {
-                return Self::match_parts(&self.parts, filename);
-            }
+            && let Some(filename) = path.rsplit('/').next()
+        {
+            return Self::match_parts(&self.parts, filename);
+        }
         self.matches(path)
     }
 
@@ -144,9 +145,7 @@ pub fn should_ignore(path: &str, patterns: &[GlobPattern]) -> bool {
     let normalized = path.replace('\\', "/");
     patterns.iter().any(|p| {
         p.matches_filename(&normalized)
-            || normalized
-                .split('/')
-                .any(|component| p.matches(component))
+            || normalized.split('/').any(|component| p.matches(component))
     })
 }
 

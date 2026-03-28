@@ -177,7 +177,7 @@ fn run(cli: Cli) -> Result<()> {
 
             let content = format!(
                 r#"# testx configuration
-# See: https://github.com/bibekblockchain/testx
+# See: https://github.com/whoisdinanath/testx
 
 # Override adapter selection (auto-detected: "{adapter}")
 # adapter = "{adapter}"
@@ -230,8 +230,7 @@ args = []
                 anyhow::bail!("Not a git repository. Impact analysis requires git.");
             }
 
-            let diff_mode = impact::DiffMode::parse(&mode)
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            let diff_mode = impact::DiffMode::parse(&mode).map_err(|e| anyhow::anyhow!("{}", e))?;
 
             let analysis = impact::analyze_impact(&project_dir, &diff_mode)
                 .map_err(|e| anyhow::anyhow!("{}", e))?;
@@ -268,11 +267,7 @@ args = []
                 .save(&project_dir)
                 .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-            println!(
-                "{} Cleared {} cache entries.",
-                "✓".green().bold(),
-                count
-            );
+            println!("{} Cleared {} cache entries.", "✓".green().bold(), count);
             Ok(())
         }
 
@@ -282,7 +277,7 @@ args = []
             max_duration,
             args: stress_args,
         } => {
-            use testx::stress::{StressConfig, StressAccumulator, format_stress_report};
+            use testx::stress::{StressAccumulator, StressConfig, format_stress_report};
 
             let config = Config::load(&project_dir);
 
@@ -294,9 +289,9 @@ args = []
                 config.args.clone()
             };
 
-            let detected = engine.detect(&project_dir).context(
-                "No test framework detected. Try 'testx detect' to diagnose.",
-            )?;
+            let detected = engine
+                .detect(&project_dir)
+                .context("No test framework detected. Try 'testx detect' to diagnose.")?;
             let adapter = engine.adapter(detected.adapter_index);
 
             if let Some(missing) = adapter.check_runner() {
@@ -337,9 +332,7 @@ args = []
                 }
 
                 let start = std::time::Instant::now();
-                let cmd_output = cmd
-                    .output()
-                    .context("Failed to execute test command")?;
+                let cmd_output = cmd.output().context("Failed to execute test command")?;
                 let elapsed = start.elapsed();
 
                 let stdout = String::from_utf8_lossy(&cmd_output.stdout).into_owned();
@@ -395,9 +388,9 @@ args = []
                 config.args.clone()
             };
 
-            let detected = engine.detect(&project_dir).context(
-                "No test framework detected. Try 'testx detect' to diagnose.",
-            )?;
+            let detected = engine
+                .detect(&project_dir)
+                .context("No test framework detected. Try 'testx detect' to diagnose.")?;
             let adapter = engine.adapter(detected.adapter_index);
 
             if let Some(missing) = adapter.check_runner() {
@@ -413,9 +406,7 @@ args = []
                 cmd.env(key, value);
             }
 
-            let cmd_output = cmd
-                .output()
-                .context("Failed to execute test command")?;
+            let cmd_output = cmd.output().context("Failed to execute test command")?;
 
             let stdout = String::from_utf8_lossy(&cmd_output.stdout).into_owned();
             let stderr = String::from_utf8_lossy(&cmd_output.stderr).into_owned();
@@ -499,8 +490,8 @@ args = []
                 }
 
                 let mode_str = affected.as_deref().unwrap_or("head");
-                let diff_mode = impact::DiffMode::parse(mode_str)
-                    .map_err(|e| anyhow::anyhow!("{}", e))?;
+                let diff_mode =
+                    impact::DiffMode::parse(mode_str).map_err(|e| anyhow::anyhow!("{}", e))?;
 
                 let analysis = impact::analyze_impact(&project_dir, &diff_mode)
                     .map_err(|e| anyhow::anyhow!("{}", e))?;
@@ -654,8 +645,8 @@ args = []
             if let Some(ref partition_str) = cli.partition {
                 use testx::sharding::ShardingMode;
 
-                let mode = ShardingMode::parse(partition_str)
-                    .map_err(|e| anyhow::anyhow!("{}", e))?;
+                let mode =
+                    ShardingMode::parse(partition_str).map_err(|e| anyhow::anyhow!("{}", e))?;
 
                 let original_count = result.total_tests();
                 result = mode.apply(&result);

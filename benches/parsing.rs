@@ -21,10 +21,7 @@ fn generate_rust_output(n: usize) -> String {
 fn generate_go_output(n: usize) -> String {
     let mut output = String::new();
     for i in 0..n {
-        output.push_str(&format!(
-            "--- PASS: TestFunc{i} (0.{:02}s)\n",
-            i % 100
-        ));
+        output.push_str(&format!("--- PASS: TestFunc{i} (0.{:02}s)\n", i % 100));
     }
     output.push_str("PASS\nok  \tpkg\t1.234s\n");
     output
@@ -32,7 +29,9 @@ fn generate_go_output(n: usize) -> String {
 
 fn generate_pytest_output(n: usize) -> String {
     let mut output = String::new();
-    output.push_str("============================= test session starts =============================\n");
+    output.push_str(
+        "============================= test session starts =============================\n",
+    );
     output.push_str("collected ");
     output.push_str(&n.to_string());
     output.push_str(" items\n\n");
@@ -113,5 +112,10 @@ fn bench_parse_pytest(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_parse_rust, bench_parse_go, bench_parse_pytest);
+criterion_group!(
+    benches,
+    bench_parse_rust,
+    bench_parse_go,
+    bench_parse_pytest
+);
 criterion_main!(benches);

@@ -14,42 +14,25 @@ pub enum TestEvent {
     },
 
     /// A test suite has started executing.
-    SuiteStarted {
-        name: String,
-    },
+    SuiteStarted { name: String },
 
     /// A single test has started.
-    TestStarted {
-        suite: String,
-        name: String,
-    },
+    TestStarted { suite: String, name: String },
 
     /// A single test has completed.
-    TestFinished {
-        suite: String,
-        test: TestCase,
-    },
+    TestFinished { suite: String, test: TestCase },
 
     /// An entire suite has completed.
-    SuiteFinished {
-        suite: TestSuite,
-    },
+    SuiteFinished { suite: TestSuite },
 
     /// The entire test run has completed.
-    RunFinished {
-        result: TestRunResult,
-    },
+    RunFinished { result: TestRunResult },
 
     /// Raw output line from the test process.
-    RawOutput {
-        stream: Stream,
-        line: String,
-    },
+    RawOutput { stream: Stream, line: String },
 
     /// Watch mode: files changed, triggering re-run.
-    WatchRerun {
-        changed_files: Vec<PathBuf>,
-    },
+    WatchRerun { changed_files: Vec<PathBuf> },
 
     /// Retry: a failed test is being retried.
     RetryStarted {
@@ -72,9 +55,7 @@ pub enum TestEvent {
     },
 
     /// Parallel: an adapter run started.
-    ParallelAdapterStarted {
-        adapter: String,
-    },
+    ParallelAdapterStarted { adapter: String },
 
     /// Parallel: an adapter run finished.
     ParallelAdapterFinished {
@@ -83,9 +64,7 @@ pub enum TestEvent {
     },
 
     /// A warning message (non-fatal).
-    Warning {
-        message: String,
-    },
+    Warning { message: String },
 
     /// A progress tick (for long-running operations).
     Progress {
@@ -283,7 +262,10 @@ impl EventHandler for TimestampedLogger {
                 format!("test started: {}::{}", suite, name)
             }
             TestEvent::TestFinished { suite, test } => {
-                format!("test finished: {}::{} ({:?})", suite, test.name, test.status)
+                format!(
+                    "test finished: {}::{} ({:?})",
+                    suite, test.name, test.status
+                )
             }
             TestEvent::SuiteFinished { suite } => format!("suite finished: {}", suite.name),
             TestEvent::RunFinished { result } => {

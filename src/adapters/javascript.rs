@@ -210,7 +210,10 @@ impl TestAdapter for JavaScriptAdapter {
                 || trimmed.starts_with('✔')
                 || trimmed.starts_with('✘')
             {
-                let status = if trimmed.starts_with('✓') || trimmed.starts_with("√") || trimmed.starts_with('✔') {
+                let status = if trimmed.starts_with('✓')
+                    || trimmed.starts_with("√")
+                    || trimmed.starts_with('✔')
+                {
                     TestStatus::Passed
                 } else if trimmed.starts_with('○') {
                     TestStatus::Skipped
@@ -218,7 +221,8 @@ impl TestAdapter for JavaScriptAdapter {
                     TestStatus::Failed
                 };
 
-                let rest = &trimmed[trimmed.char_indices().nth(1).map(|(i, _)| i).unwrap_or(1)..].trim_start();
+                let rest = &trimmed[trimmed.char_indices().nth(1).map(|(i, _)| i).unwrap_or(1)..]
+                    .trim_start();
                 // AVA failure format: "[fail]: suite › test Error msg" — strip "[fail]: " prefix
                 let rest = rest.strip_prefix("[fail]: ").unwrap_or(rest);
                 let (name, duration) = parse_jest_test_line(rest);
@@ -242,8 +246,11 @@ impl TestAdapter for JavaScriptAdapter {
             }
 
             // Vitest format: "  ✓ module > test name 5ms"
-            if (trimmed.contains(" ✓ ") || trimmed.contains(" ✕ ") || trimmed.contains(" × ")
-                || trimmed.contains(" ✔ ") || trimmed.contains(" ✘ "))
+            if (trimmed.contains(" ✓ ")
+                || trimmed.contains(" ✕ ")
+                || trimmed.contains(" × ")
+                || trimmed.contains(" ✔ ")
+                || trimmed.contains(" ✘ "))
                 && !trimmed.starts_with("Test")
             {
                 let status = if trimmed.contains(" ✓ ") || trimmed.contains(" ✔ ") {
@@ -261,7 +268,10 @@ impl TestAdapter for JavaScriptAdapter {
                     .trim()
                     .to_string();
                 // Strip AVA "[fail]: " prefix
-                let name = name.strip_prefix("[fail]: ").map(|s| s.to_string()).unwrap_or(name);
+                let name = name
+                    .strip_prefix("[fail]: ")
+                    .map(|s| s.to_string())
+                    .unwrap_or(name);
 
                 let error = if status == TestStatus::Failed {
                     failure_messages.get(&name).map(|msg| super::TestError {
@@ -415,7 +425,11 @@ fn parse_jest_summary(output: &str, exit_code: i32) -> TestSuite {
                             tests.push(TestCase {
                                 name: format!(
                                     "{}_{}",
-                                    if status == TestStatus::Passed { "test" } else { "failed" },
+                                    if status == TestStatus::Passed {
+                                        "test"
+                                    } else {
+                                        "failed"
+                                    },
                                     tests.len() + i + 1
                                 ),
                                 status: status.clone(),
@@ -430,31 +444,37 @@ fn parse_jest_summary(output: &str, exit_code: i32) -> TestSuite {
         }
 
         // AVA format: "30 tests failed" or "5 tests passed" or "2 known failures"
-        if (trimmed.contains("tests passed") || trimmed.contains("tests failed")
-            || trimmed.contains("test passed") || trimmed.contains("test failed"))
+        if (trimmed.contains("tests passed")
+            || trimmed.contains("tests failed")
+            || trimmed.contains("test passed")
+            || trimmed.contains("test failed"))
             && let Some(n) = trimmed
                 .split_whitespace()
                 .next()
                 .and_then(|s| s.parse::<usize>().ok())
         {
-                let status = if trimmed.contains("passed") {
-                    TestStatus::Passed
-                } else {
-                    TestStatus::Failed
-                };
-                for i in 0..n {
-                    tests.push(TestCase {
-                        name: format!(
-                            "{}_{}",
-                            if status == TestStatus::Passed { "test" } else { "failed" },
-                            tests.len() + i + 1
-                        ),
-                        status: status.clone(),
-                        duration: Duration::from_millis(0),
-                        error: None,
-                    });
-                }
+            let status = if trimmed.contains("passed") {
+                TestStatus::Passed
+            } else {
+                TestStatus::Failed
+            };
+            for i in 0..n {
+                tests.push(TestCase {
+                    name: format!(
+                        "{}_{}",
+                        if status == TestStatus::Passed {
+                            "test"
+                        } else {
+                            "failed"
+                        },
+                        tests.len() + i + 1
+                    ),
+                    status: status.clone(),
+                    duration: Duration::from_millis(0),
+                    error: None,
+                });
             }
+        }
     }
 
     if tests.is_empty() {
@@ -566,15 +586,22 @@ fn parse_jest_duration(output: &str) -> Option<Duration> {
                 }
             }
         }
-        // Vitest: "Duration  30.18s (transform 24.34s, ...)" 
-        if trimmed.starts_with("Duration") && !trimmed.contains(":")
+        // Vitest: "Duration  30.18s (transform 24.34s, ...)"
+        if trimmed.starts_with("Duration")
+            && !trimmed.contains(":")
             && let Some(dur_str) = trimmed
                 .strip_prefix("Duration")
                 .and_then(|s| s.split_whitespace().next())
         {
-            if let Some(secs) = dur_str.strip_suffix('s').and_then(|s| s.parse::<f64>().ok()) {
+            if let Some(secs) = dur_str
+                .strip_suffix('s')
+                .and_then(|s| s.parse::<f64>().ok())
+            {
                 return Some(duration_from_secs_safe(secs));
-            } else if let Some(ms) = dur_str.strip_suffix("ms").and_then(|s| s.parse::<f64>().ok()) {
+            } else if let Some(ms) = dur_str
+                .strip_suffix("ms")
+                .and_then(|s| s.parse::<f64>().ok())
+            {
                 return Some(Duration::from_millis(ms as u64));
             }
         }

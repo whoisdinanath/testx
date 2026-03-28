@@ -1,8 +1,8 @@
 //! Integration tests for output formats.
 
 use assert_cmd::Command;
-use tempfile::TempDir;
 use std::fs;
+use tempfile::TempDir;
 
 fn setup_project(dir: &TempDir) {
     fs::write(

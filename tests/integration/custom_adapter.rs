@@ -1,8 +1,8 @@
 //! Integration tests for custom adapter / script adapter functionality.
 
 use assert_cmd::Command;
-use tempfile::TempDir;
 use std::fs;
+use tempfile::TempDir;
 
 #[test]
 fn config_with_custom_command() {

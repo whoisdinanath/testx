@@ -1,8 +1,8 @@
 //! Integration tests for config file handling.
 
 use assert_cmd::Command;
-use tempfile::TempDir;
 use std::fs;
+use tempfile::TempDir;
 
 #[test]
 fn init_creates_config() {

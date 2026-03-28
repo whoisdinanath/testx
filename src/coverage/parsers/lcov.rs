@@ -41,12 +41,14 @@ pub fn parse_lcov(content: &str) -> CoverageResult {
         } else if let Some(da) = line.strip_prefix("DA:") {
             // Line data: DA:line_number,execution_count
             if let Some((line_str, count_str)) = da.split_once(',')
-                && let (Ok(line_num), Ok(count)) =
-                    (line_str.trim().parse::<usize>(), count_str.trim().parse::<u64>())
-                {
-                    let entry = line_hits.entry(line_num).or_insert(0);
-                    *entry = (*entry).max(count);
-                }
+                && let (Ok(line_num), Ok(count)) = (
+                    line_str.trim().parse::<usize>(),
+                    count_str.trim().parse::<u64>(),
+                )
+            {
+                let entry = line_hits.entry(line_num).or_insert(0);
+                *entry = (*entry).max(count);
+            }
         } else if let Some(brda) = line.strip_prefix("BRDA:") {
             // Branch data: BRDA:line,block,branch,taken
             let parts: Vec<&str> = brda.splitn(4, ',').collect();

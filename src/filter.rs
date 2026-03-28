@@ -106,9 +106,10 @@ impl TestFilter {
     pub fn matches(&self, test: &TestCase, suite_name: &str) -> bool {
         // Check suite filter
         if let Some(ref sf) = self.suite_filter
-            && !suite_name.contains(sf) {
-                return false;
-            }
+            && !suite_name.contains(sf)
+        {
+            return false;
+        }
 
         // Check status filter
         if !self.status_filter.is_empty() && !self.status_filter.contains(&test.status) {
@@ -140,9 +141,10 @@ impl TestFilter {
             .filter_map(|suite| {
                 // Apply suite filter
                 if let Some(ref sf) = self.suite_filter
-                    && !suite.name.contains(sf) {
-                        return None;
-                    }
+                    && !suite.name.contains(sf)
+                {
+                    return None;
+                }
 
                 let tests: Vec<TestCase> = suite
                     .tests
@@ -248,12 +250,7 @@ fn glob_match(segments: &[GlobSegment], s: &str) -> bool {
     glob_match_recursive(segments, s, 0, 0)
 }
 
-fn glob_match_recursive(
-    segments: &[GlobSegment],
-    s: &str,
-    seg_idx: usize,
-    str_idx: usize,
-) -> bool {
+fn glob_match_recursive(segments: &[GlobSegment], s: &str, seg_idx: usize, str_idx: usize) -> bool {
     if seg_idx == segments.len() {
         return str_idx == s.len();
     }
@@ -279,11 +276,7 @@ fn glob_match_recursive(
 }
 
 /// Build a TestFilter from filter configuration strings.
-pub fn build_filter(
-    include: Option<&str>,
-    exclude: Option<&str>,
-    failed_only: bool,
-) -> TestFilter {
+pub fn build_filter(include: Option<&str>, exclude: Option<&str>, failed_only: bool) -> TestFilter {
     let mut filter = TestFilter::new();
 
     if let Some(inc) = include {
@@ -312,7 +305,10 @@ pub struct FilterSummary {
 }
 
 /// Apply filter and compute summary statistics.
-pub fn filter_with_summary(filter: &TestFilter, result: &TestRunResult) -> (TestRunResult, FilterSummary) {
+pub fn filter_with_summary(
+    filter: &TestFilter,
+    result: &TestRunResult,
+) -> (TestRunResult, FilterSummary) {
     let total_before = result.total_tests();
     let suites_before = result.suites.len();
 
@@ -518,10 +514,7 @@ mod tests {
     #[test]
     fn apply_filter_removes_empty_suites() {
         let result = make_result(vec![
-            make_suite(
-                "MathTest",
-                vec![make_test("test_add", TestStatus::Passed)],
-            ),
+            make_suite("MathTest", vec![make_test("test_add", TestStatus::Passed)]),
             make_suite(
                 "StringTest",
                 vec![make_test("test_upper", TestStatus::Passed)],

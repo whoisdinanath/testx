@@ -155,34 +155,19 @@ mod tests {
 
     #[test]
     fn key_to_action_run_failed() {
-        assert_eq!(
-            TerminalInput::key_to_action(b'f'),
-            WatchAction::RunFailed
-        );
-        assert_eq!(
-            TerminalInput::key_to_action(b'F'),
-            WatchAction::RunFailed
-        );
+        assert_eq!(TerminalInput::key_to_action(b'f'), WatchAction::RunFailed);
+        assert_eq!(TerminalInput::key_to_action(b'F'), WatchAction::RunFailed);
     }
 
     #[test]
     fn key_to_action_clear() {
-        assert_eq!(
-            TerminalInput::key_to_action(b'c'),
-            WatchAction::ClearAndRun
-        );
+        assert_eq!(TerminalInput::key_to_action(b'c'), WatchAction::ClearAndRun);
     }
 
     #[test]
     fn key_to_action_unknown() {
-        assert_eq!(
-            TerminalInput::key_to_action(b'x'),
-            WatchAction::Continue
-        );
-        assert_eq!(
-            TerminalInput::key_to_action(b'z'),
-            WatchAction::Continue
-        );
+        assert_eq!(TerminalInput::key_to_action(b'x'), WatchAction::Continue);
+        assert_eq!(TerminalInput::key_to_action(b'z'), WatchAction::Continue);
     }
 
     #[test]

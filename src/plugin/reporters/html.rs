@@ -142,10 +142,7 @@ fn write_styles(html: &mut String, dark: bool) {
         html,
         ":root{{--bg:{bg};--fg:{fg};--card:{card_bg};--border:{border};}}"
     );
-    let _ = writeln!(
-        html,
-        "* {{margin:0;padding:0;box-sizing:border-box;}}"
-    );
+    let _ = writeln!(html, "* {{margin:0;padding:0;box-sizing:border-box;}}");
     let _ = writeln!(
         html,
         "body {{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;\
@@ -251,18 +248,8 @@ fn write_summary_cards(html: &mut String, result: &TestRunResult) {
         "Skipped",
         " skip-text",
     );
-    write_card(
-        html,
-        &result.suites.len().to_string(),
-        "Suites",
-        "",
-    );
-    write_card(
-        html,
-        &format_duration(result.duration),
-        "Duration",
-        "",
-    );
+    write_card(html, &result.suites.len().to_string(), "Suites", "");
+    write_card(html, &format_duration(result.duration), "Duration", "");
 
     let _ = writeln!(html, "</div>");
 }

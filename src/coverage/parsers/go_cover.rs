@@ -189,10 +189,7 @@ github.com/user/project/main.go:10.2,12.3 1 3
 
     #[test]
     fn parse_coverage_line_valid() {
-        let block = parse_coverage_line(
-            "github.com/user/project/main.go:10.14,12.2 1 5",
-        )
-        .unwrap();
+        let block = parse_coverage_line("github.com/user/project/main.go:10.14,12.2 1 5").unwrap();
         assert_eq!(block.file, "github.com/user/project/main.go");
         assert_eq!(block.start_line, 10);
         assert_eq!(block.end_line, 12);

@@ -144,7 +144,8 @@ fn compute_performance_score(runs: &[RunRecord]) -> f64 {
     }
 
     // Coefficient of variation (lower = more consistent)
-    let variance = durations.iter().map(|d| (d - mean).powi(2)).sum::<f64>() / durations.len() as f64;
+    let variance =
+        durations.iter().map(|d| (d - mean).powi(2)).sum::<f64>() / durations.len() as f64;
     let std_dev = variance.sqrt();
     let cv = std_dev / mean;
 
@@ -260,9 +261,24 @@ pub fn format_analytics_dashboard(history: &TestHistory) -> String {
     );
     let _ = writeln!(out);
     let _ = writeln!(out, "  Components:");
-    let _ = writeln!(out, "    Pass Rate:    {} {:.1}%", score_bar(health.pass_rate), health.pass_rate);
-    let _ = writeln!(out, "    Stability:    {} {:.1}%", score_bar(health.stability), health.stability);
-    let _ = writeln!(out, "    Performance:  {} {:.1}%", score_bar(health.performance), health.performance);
+    let _ = writeln!(
+        out,
+        "    Pass Rate:    {} {:.1}%",
+        score_bar(health.pass_rate),
+        health.pass_rate
+    );
+    let _ = writeln!(
+        out,
+        "    Stability:    {} {:.1}%",
+        score_bar(health.stability),
+        health.stability
+    );
+    let _ = writeln!(
+        out,
+        "    Performance:  {} {:.1}%",
+        score_bar(health.performance),
+        health.performance
+    );
     if let Some(cov) = health.coverage {
         let _ = writeln!(out, "    Coverage:     {} {:.1}%", score_bar(cov), cov);
     }

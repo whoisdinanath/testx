@@ -8,11 +8,11 @@ use crate::config::{Config, WatchConfig};
 use crate::error::{Result, TestxError};
 use crate::events::EventBus;
 use crate::runner::{Runner, RunnerConfig};
-use crate::watcher::terminal::{
-    clear_screen, print_watch_separator, print_watch_start, print_watch_status, TerminalInput,
-    WatchAction,
-};
 use crate::watcher::file_watcher::FileWatcher;
+use crate::watcher::terminal::{
+    TerminalInput, WatchAction, clear_screen, print_watch_separator, print_watch_start,
+    print_watch_status,
+};
 
 /// Statistics tracked across watch mode re-runs.
 #[derive(Debug, Clone, Default)]

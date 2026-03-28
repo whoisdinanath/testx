@@ -177,8 +177,11 @@ impl Runner {
 
         // Phase 3: parse (borrows engine immutably again)
         let adapter = self.engine.adapter(adapter_index);
-        let mut result =
-            adapter.parse_output(&exec_output.stdout, &exec_output.stderr, exec_output.exit_code);
+        let mut result = adapter.parse_output(
+            &exec_output.stdout,
+            &exec_output.stderr,
+            exec_output.exit_code,
+        );
 
         // Use wall-clock time if parser didn't capture duration
         if result.duration.as_millis() == 0 {
@@ -232,8 +235,11 @@ impl Runner {
 
         // Phase 3: parse
         let adapter = self.engine.adapter(adapter_index);
-        let mut result =
-            adapter.parse_output(&exec_output.stdout, &exec_output.stderr, exec_output.exit_code);
+        let mut result = adapter.parse_output(
+            &exec_output.stdout,
+            &exec_output.stderr,
+            exec_output.exit_code,
+        );
 
         if result.duration.as_millis() == 0 {
             result.duration = exec_output.duration;
@@ -258,7 +264,11 @@ impl Runner {
                 .ok_or_else(|| TestxError::AdapterNotFound { name: name.clone() })?;
 
             let adapter = self.engine.adapter(index);
-            Ok((index, adapter.name().to_string(), adapter.name().to_string()))
+            Ok((
+                index,
+                adapter.name().to_string(),
+                adapter.name().to_string(),
+            ))
         } else {
             let detected = self
                 .engine
@@ -364,12 +374,11 @@ impl Runner {
 
         let duration = start.elapsed();
 
-        if timed_out
-            && let Some(secs) = self.config.timeout {
-                self.event_bus.emit(TestEvent::Warning {
-                    message: format!("Test timed out after {}s", secs.as_secs()),
-                });
-            }
+        if timed_out && let Some(secs) = self.config.timeout {
+            self.event_bus.emit(TestEvent::Warning {
+                message: format!("Test timed out after {}s", secs.as_secs()),
+            });
+        }
 
         Ok(ExecutionOutput {
             stdout: stdout_lines.join("\n"),

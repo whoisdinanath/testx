@@ -340,7 +340,11 @@ pub fn merge_worker_results(workers: &[WorkerResult]) -> TestRunResult {
 
 /// Build a ParallelResult from worker results.
 pub fn build_parallel_result(workers: Vec<WorkerResult>) -> ParallelResult {
-    let wall_time = workers.iter().map(|w| w.wall_time).max().unwrap_or_default();
+    let wall_time = workers
+        .iter()
+        .map(|w| w.wall_time)
+        .max()
+        .unwrap_or_default();
     let num_workers = workers.len();
     let had_cancellation = workers.iter().any(|w| w.cancelled);
     let merged = merge_worker_results(&workers);
@@ -377,10 +381,7 @@ impl CancellationToken {
 
     /// Check if cancellation was requested.
     pub fn is_cancelled(&self) -> bool {
-        self.cancelled
-            .lock()
-            .map(|c| *c)
-            .unwrap_or(false)
+        self.cancelled.lock().map(|c| *c).unwrap_or(false)
     }
 }
 
@@ -1039,7 +1040,17 @@ mod tests {
                 worker_id: 0,
                 test_groups: vec![TestGroup {
                     suite_name: "s".into(),
-                    test_names: vec!["a".into(), "b".into(), "c".into(), "d".into(), "e".into(), "f".into(), "g".into(), "h".into(), "i".into()],
+                    test_names: vec![
+                        "a".into(),
+                        "b".into(),
+                        "c".into(),
+                        "d".into(),
+                        "e".into(),
+                        "f".into(),
+                        "g".into(),
+                        "h".into(),
+                        "i".into(),
+                    ],
                 }],
             },
             WorkPartition {

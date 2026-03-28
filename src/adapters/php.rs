@@ -5,7 +5,9 @@ use std::time::Duration;
 use anyhow::Result;
 
 use super::util::duration_from_secs_safe;
-use super::{DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus, TestSuite};
+use super::{
+    DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus, TestSuite,
+};
 
 pub struct PhpAdapter;
 
@@ -324,15 +326,12 @@ fn is_testdox_suite_header(line: &str) -> bool {
         || line.starts_with("FAILURES!")
         || line.starts_with("ERRORS!")
         || line.starts_with("There ")
-        || line.contains("test")
-            && line.contains("assertion")
+        || line.contains("test") && line.contains("assertion")
     {
         return false;
     }
     // Should start with uppercase letter (class name)
-    line.chars()
-        .next()
-        .is_some_and(|c| c.is_ascii_uppercase())
+    line.chars().next().is_some_and(|c| c.is_ascii_uppercase())
 }
 
 /// Parse a single testdox test line.
@@ -381,10 +380,11 @@ fn extract_testdox_duration(name: &str) -> (String, Duration) {
         let inside = &name[paren_start + 1..name.len().saturating_sub(1)];
         let inside = inside.trim();
         if (inside.ends_with('s') || inside.ends_with("ms"))
-            && let Some(dur) = parse_testdox_duration_str(inside) {
-                let clean = name[..paren_start].trim().to_string();
-                return (clean, dur);
-            }
+            && let Some(dur) = parse_testdox_duration_str(inside)
+        {
+            let clean = name[..paren_start].trim().to_string();
+            return (clean, dur);
+        }
     }
     (name.to_string(), Duration::from_millis(0))
 }
@@ -550,7 +550,10 @@ fn enrich_with_errors(suites: &mut [TestSuite], failures: &[PhpUnitFailure]) {
 /// Find a matching failure for a test name.
 /// PHPUnit failure headers use "Namespace\Class::method" format.
 /// Test names from testdox are human-readable, from summary they're synthetic.
-fn find_matching_failure<'a>(test_name: &str, failures: &'a [PhpUnitFailure]) -> Option<&'a PhpUnitFailure> {
+fn find_matching_failure<'a>(
+    test_name: &str,
+    failures: &'a [PhpUnitFailure],
+) -> Option<&'a PhpUnitFailure> {
     // Direct match on method name
     for failure in failures {
         // Extract just the method name from "Namespace\Class::method"
@@ -822,11 +825,13 @@ Tests: 3, Assertions: 3, Failures: 1.
             "Tests\\CalculatorTest::testDivision"
         );
         assert!(failures[0].message.contains("Failed asserting"));
-        assert!(failures[0]
-            .location
-            .as_ref()
-            .unwrap()
-            .contains("CalculatorTest.php:42"));
+        assert!(
+            failures[0]
+                .location
+                .as_ref()
+                .unwrap()
+                .contains("CalculatorTest.php:42")
+        );
     }
 
     #[test]
@@ -905,7 +910,10 @@ FAILURES!
 
     #[test]
     fn testdox_matches_test() {
-        assert!(testdox_matches("can add two numbers", "testCanAddTwoNumbers"));
+        assert!(testdox_matches(
+            "can add two numbers",
+            "testCanAddTwoNumbers"
+        ));
         assert!(testdox_matches(
             "Can add two numbers",
             "testCanAddTwoNumbers"
@@ -915,7 +923,10 @@ FAILURES!
 
     #[test]
     fn camel_case_to_words_test() {
-        assert_eq!(camel_case_to_words("CanAddTwoNumbers"), "can add two numbers");
+        assert_eq!(
+            camel_case_to_words("CanAddTwoNumbers"),
+            "can add two numbers"
+        );
         assert_eq!(camel_case_to_words("testAdd"), "test add");
         assert_eq!(camel_case_to_words("simple"), "simple");
     }

@@ -140,8 +140,7 @@ impl CacheStore {
     /// Remove expired and excess entries.
     pub fn prune(&mut self, config: &CacheConfig) {
         // Remove expired entries
-        self.entries
-            .retain(|e| !e.is_expired(config.max_age_secs));
+        self.entries.retain(|e| !e.is_expired(config.max_age_secs));
 
         // Keep only the most recent entries
         if self.entries.len() > config.max_entries {
@@ -348,11 +347,7 @@ pub fn cache_result(
 }
 
 /// Check if we have a cached result.
-pub fn check_cache(
-    project_dir: &Path,
-    hash: &str,
-    config: &CacheConfig,
-) -> Option<CacheEntry> {
+pub fn check_cache(project_dir: &Path, hash: &str, config: &CacheConfig) -> Option<CacheEntry> {
     let store = CacheStore::load(project_dir);
     store.lookup(hash, config).cloned()
 }
@@ -383,8 +378,8 @@ pub fn format_cache_hit(entry: &CacheEntry) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
     use crate::adapters::{TestCase, TestStatus, TestSuite};
+    use std::time::Duration;
 
     fn make_result() -> TestRunResult {
         TestRunResult {
@@ -724,7 +719,11 @@ mod tests {
 
         // Modify file (changes mtime and/or size)
         std::thread::sleep(std::time::Duration::from_millis(50));
-        std::fs::write(dir.path().join("main.rs"), "fn main() { println!(\"hello\"); }").unwrap();
+        std::fs::write(
+            dir.path().join("main.rs"),
+            "fn main() { println!(\"hello\"); }",
+        )
+        .unwrap();
 
         let hash2 = compute_project_hash(dir.path(), "Rust").unwrap();
         // Hash should change because mtime/size changed

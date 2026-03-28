@@ -5,7 +5,9 @@ use std::time::Duration;
 use anyhow::Result;
 
 use super::util::duration_from_secs_safe;
-use super::{DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus, TestSuite};
+use super::{
+    DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus, TestSuite,
+};
 
 pub struct CppAdapter;
 
@@ -489,9 +491,11 @@ fn extract_cpp_location(output: &str) -> Option<String> {
         }
         // "at file.cpp:42" style
         if let Some(rest) = trimmed.strip_prefix("at ")
-            && rest.contains(':') && (rest.contains(".cpp") || rest.contains(".c") || rest.contains(".h")) {
-                return Some(rest.to_string());
-            }
+            && rest.contains(':')
+            && (rest.contains(".cpp") || rest.contains(".c") || rest.contains(".h"))
+        {
+            return Some(rest.to_string());
+        }
     }
     None
 }
@@ -588,9 +592,7 @@ fn parse_gtest_output(output: &str) -> Vec<TestSuite> {
                     break;
                 }
 
-                if !line.is_empty()
-                    && !line.starts_with("[")
-                {
+                if !line.is_empty() && !line.starts_with("[") {
                     output_lines.push(line.to_string());
                 }
 
@@ -606,23 +608,17 @@ fn parse_gtest_output(output: &str) -> Vec<TestSuite> {
                 let location = output_lines
                     .iter()
                     .find_map(|l| extract_file_line_location(l));
-                Some(TestError {
-                    message,
-                    location,
-                })
+                Some(TestError { message, location })
             } else {
                 None
             };
 
-            suites_map
-                .entry(suite_name)
-                .or_default()
-                .push(TestCase {
-                    name: test_name,
-                    status,
-                    duration,
-                    error,
-                });
+            suites_map.entry(suite_name).or_default().push(TestCase {
+                name: test_name,
+                status,
+                duration,
+                error,
+            });
         }
 
         i += 1;
@@ -832,7 +828,12 @@ Expected equality of these values:
         let suites = parse_gtest_output(stdout);
         assert_eq!(suites.len(), 1);
         assert_eq!(suites[0].tests.len(), 2);
-        assert!(suites[0].tests.iter().all(|t| t.status == TestStatus::Passed));
+        assert!(
+            suites[0]
+                .tests
+                .iter()
+                .all(|t| t.status == TestStatus::Passed)
+        );
     }
 
     #[test]
@@ -948,7 +949,10 @@ test_edge.cpp:42: Failure
 
     #[test]
     fn first_meaningful_line_test() {
-        assert_eq!(first_meaningful_line("---\n\nHello world\nmore"), "Hello world");
+        assert_eq!(
+            first_meaningful_line("---\n\nHello world\nmore"),
+            "Hello world"
+        );
         assert_eq!(first_meaningful_line("first"), "first");
     }
 

@@ -154,7 +154,12 @@ impl CoverageResult {
     where
         F: Fn(&FileCoverage) -> bool,
     {
-        let files: Vec<FileCoverage> = self.files.iter().filter(|f| predicate(f)).cloned().collect();
+        let files: Vec<FileCoverage> = self
+            .files
+            .iter()
+            .filter(|f| predicate(f))
+            .cloned()
+            .collect();
         Self::from_files(files)
     }
 }
@@ -297,15 +302,17 @@ pub fn merge_coverage(results: &[CoverageResult]) -> CoverageResult {
 
     for result in results {
         for file in &result.files {
-            let entry = file_map.entry(file.path.clone()).or_insert_with(|| FileCoverage {
-                path: file.path.clone(),
-                total_lines: 0,
-                covered_lines: 0,
-                uncovered_ranges: Vec::new(),
-                line_hits: HashMap::new(),
-                total_branches: 0,
-                covered_branches: 0,
-            });
+            let entry = file_map
+                .entry(file.path.clone())
+                .or_insert_with(|| FileCoverage {
+                    path: file.path.clone(),
+                    total_lines: 0,
+                    covered_lines: 0,
+                    uncovered_ranges: Vec::new(),
+                    line_hits: HashMap::new(),
+                    total_branches: 0,
+                    covered_branches: 0,
+                });
 
             // Merge line hits (take max)
             for (&line, &hits) in &file.line_hits {
@@ -334,7 +341,10 @@ pub fn merge_coverage(results: &[CoverageResult]) -> CoverageResult {
 }
 
 /// Compute contiguous uncovered line ranges from per-line hit data.
-fn compute_uncovered_ranges(line_hits: &HashMap<usize, u64>, total_lines: usize) -> Vec<(usize, usize)> {
+fn compute_uncovered_ranges(
+    line_hits: &HashMap<usize, u64>,
+    total_lines: usize,
+) -> Vec<(usize, usize)> {
     let mut ranges = Vec::new();
     let mut start: Option<usize> = None;
 
@@ -365,11 +375,8 @@ pub fn coverage_delta(old: &CoverageResult, new: &CoverageResult) -> CoverageDel
     let branch_delta = new.branch_percentage - old.branch_percentage;
 
     let mut file_deltas = Vec::new();
-    let old_map: HashMap<&Path, &FileCoverage> = old
-        .files
-        .iter()
-        .map(|f| (f.path.as_path(), f))
-        .collect();
+    let old_map: HashMap<&Path, &FileCoverage> =
+        old.files.iter().map(|f| (f.path.as_path(), f)).collect();
 
     for file in &new.files {
         if let Some(old_file) = old_map.get(file.path.as_path()) {
@@ -457,9 +464,7 @@ pub fn should_include_file(path: &Path, include: &[String], exclude: &[String]) 
 
     // If includes are specified, file must match at least one
     if !include.is_empty() {
-        let matches_include = include.iter().any(|pattern| {
-            glob_match(pattern, &path_str)
-        });
+        let matches_include = include.iter().any(|pattern| glob_match(pattern, &path_str));
         if !matches_include {
             return false;
         }
@@ -521,10 +526,8 @@ mod tests {
 
     #[test]
     fn coverage_from_files() {
-        let result = CoverageResult::from_files(vec![
-            make_file("a.rs", 100, 80),
-            make_file("b.rs", 50, 50),
-        ]);
+        let result =
+            CoverageResult::from_files(vec![make_file("a.rs", 100, 80), make_file("b.rs", 50, 50)]);
         assert_eq!(result.total_lines, 150);
         assert_eq!(result.covered_lines, 130);
         assert!((result.percentage - 86.66).abs() < 0.1);
@@ -661,12 +664,13 @@ mod tests {
     #[test]
     fn coverage_delta_new_file() {
         let old = CoverageResult::from_files(vec![make_file("a.rs", 100, 80)]);
-        let new = CoverageResult::from_files(vec![
-            make_file("a.rs", 100, 80),
-            make_file("b.rs", 50, 40),
-        ]);
+        let new =
+            CoverageResult::from_files(vec![make_file("a.rs", 100, 80), make_file("b.rs", 50, 40)]);
         let delta = coverage_delta(&old, &new);
-        let new_file = delta.file_deltas.iter().find(|d| d.path == Path::new("b.rs"));
+        let new_file = delta
+            .file_deltas
+            .iter()
+            .find(|d| d.path == Path::new("b.rs"));
         assert!(new_file.is_some());
         assert_eq!(new_file.unwrap().old_percentage, 0.0);
     }

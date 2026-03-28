@@ -114,11 +114,10 @@ impl TestHistory {
         let history_file = data_dir.join("history.json");
 
         let runs = if history_file.exists() {
-            let content = std::fs::read_to_string(&history_file).map_err(|e| {
-                TestxError::HistoryError {
+            let content =
+                std::fs::read_to_string(&history_file).map_err(|e| TestxError::HistoryError {
                     message: format!("Failed to read history: {e}"),
-                }
-            })?;
+                })?;
             serde_json::from_str(&content).unwrap_or_default()
         } else {
             Vec::new()
@@ -161,11 +160,10 @@ impl TestHistory {
         })?;
 
         let history_file = self.data_dir.join("history.json");
-        let content = serde_json::to_string_pretty(&self.runs).map_err(|e| {
-            TestxError::HistoryError {
+        let content =
+            serde_json::to_string_pretty(&self.runs).map_err(|e| TestxError::HistoryError {
                 message: format!("Failed to serialize history: {e}"),
-            }
-        })?;
+            })?;
 
         std::fs::write(&history_file, content).map_err(|e| TestxError::HistoryError {
             message: format!("Failed to write history: {e}"),
@@ -410,9 +408,7 @@ fn chrono_now() -> String {
     // Days since Unix epoch to year/month/day (simplified)
     let (year, month, day) = days_to_date(days);
 
-    format!(
-        "{year:04}-{month:02}-{day:02}T{hours:02}:{minutes:02}:{seconds:02}Z"
-    )
+    format!("{year:04}-{month:02}-{day:02}T{hours:02}:{minutes:02}:{seconds:02}Z")
 }
 
 /// Convert days since Unix epoch to (year, month, day).
@@ -479,10 +475,18 @@ mod tests {
     fn make_result(passed: usize, failed: usize, skipped: usize) -> TestRunResult {
         let mut tests = Vec::new();
         for i in 0..passed {
-            tests.push(make_test(&format!("pass_{i}"), TestStatus::Passed, 10 + i as u64));
+            tests.push(make_test(
+                &format!("pass_{i}"),
+                TestStatus::Passed,
+                10 + i as u64,
+            ));
         }
         for i in 0..failed {
-            tests.push(make_failed_test(&format!("fail_{i}"), 5, "assertion failed"));
+            tests.push(make_failed_test(
+                &format!("fail_{i}"),
+                5,
+                "assertion failed",
+            ));
         }
         for i in 0..skipped {
             tests.push(make_test(&format!("skip_{i}"), TestStatus::Skipped, 0));
@@ -508,7 +512,9 @@ mod tests {
     fn record_run() {
         let mut history = TestHistory::new_in_memory();
         // Don't save to disk in tests
-        history.runs.push(RunRecord::from_result(&make_result(5, 1, 0)));
+        history
+            .runs
+            .push(RunRecord::from_result(&make_result(5, 1, 0)));
         assert_eq!(history.run_count(), 1);
     }
 
@@ -542,7 +548,9 @@ mod tests {
     fn recent_runs() {
         let mut history = TestHistory::new_in_memory();
         for _ in 0..10 {
-            history.runs.push(RunRecord::from_result(&make_result(5, 0, 0)));
+            history
+                .runs
+                .push(RunRecord::from_result(&make_result(5, 0, 0)));
         }
         assert_eq!(history.recent_runs(3).len(), 3);
         assert_eq!(history.recent_runs(20).len(), 10);
@@ -599,7 +607,9 @@ mod tests {
     fn get_flaky_no_flaky() {
         let mut history = TestHistory::new_in_memory();
         for _ in 0..10 {
-            history.runs.push(RunRecord::from_result(&make_result(5, 0, 0)));
+            history
+                .runs
+                .push(RunRecord::from_result(&make_result(5, 0, 0)));
         }
 
         let flaky = history.get_flaky_tests(5, 0.95);
@@ -629,7 +639,9 @@ mod tests {
     fn pass_rate_all_pass() {
         let mut history = TestHistory::new_in_memory();
         for _ in 0..5 {
-            history.runs.push(RunRecord::from_result(&make_result(10, 0, 0)));
+            history
+                .runs
+                .push(RunRecord::from_result(&make_result(10, 0, 0)));
         }
         assert_eq!(history.pass_rate(10), 100.0);
     }
@@ -637,7 +649,9 @@ mod tests {
     #[test]
     fn pass_rate_mixed() {
         let mut history = TestHistory::new_in_memory();
-        history.runs.push(RunRecord::from_result(&make_result(8, 2, 0)));
+        history
+            .runs
+            .push(RunRecord::from_result(&make_result(8, 2, 0)));
         assert!((history.pass_rate(10) - 80.0).abs() < 0.1);
     }
 
@@ -662,7 +676,9 @@ mod tests {
     fn prune_runs() {
         let mut history = TestHistory::new_in_memory();
         for _ in 0..20 {
-            history.runs.push(RunRecord::from_result(&make_result(1, 0, 0)));
+            history
+                .runs
+                .push(RunRecord::from_result(&make_result(1, 0, 0)));
         }
         // Can't save to real path, just test the pruning logic
         let before = history.run_count();

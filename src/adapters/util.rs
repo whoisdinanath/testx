@@ -1,9 +1,7 @@
 use std::process::Command;
 use std::time::Duration;
 
-use crate::adapters::{
-    DetectionResult, TestCase, TestError, TestRunResult, TestStatus, TestSuite,
-};
+use crate::adapters::{DetectionResult, TestCase, TestError, TestRunResult, TestStatus, TestSuite};
 
 /// Create a Duration from seconds, returning Duration::ZERO for NaN, infinity, or negative values.
 /// This is a safe wrapper around `Duration::from_secs_f64` which panics on such inputs.
@@ -108,10 +106,7 @@ impl SummaryCounts {
 
 /// Generate synthetic test cases from summary counts.
 /// Used when the adapter can only extract totals, not individual test names.
-pub fn synthetic_tests_from_counts(
-    counts: &SummaryCounts,
-    suite_name: &str,
-) -> Vec<TestCase> {
+pub fn synthetic_tests_from_counts(counts: &SummaryCounts, suite_name: &str) -> Vec<TestCase> {
     let mut tests = Vec::new();
 
     for i in 0..counts.passed {
@@ -188,9 +183,7 @@ pub fn parse_duration_str(s: &str) -> Option<Duration> {
 
 /// Check if a binary is available on PATH. Returns the full path if found.
 pub fn check_binary(name: &str) -> Option<String> {
-    which::which(name)
-        .ok()
-        .map(|p| p.display().to_string())
+    which::which(name).ok().map(|p| p.display().to_string())
 }
 
 /// Check if a binary is available, returning the missing name if not.
@@ -385,18 +378,23 @@ mod tests {
     #[test]
     fn fallback_result_fail_no_output() {
         let result = fallback_result(2, "Go", "", "");
-        assert!(result.suites[0].tests[0]
-            .error
-            .as_ref()
-            .unwrap()
-            .message
-            .contains("exited with code 2"));
+        assert!(
+            result.suites[0].tests[0]
+                .error
+                .as_ref()
+                .unwrap()
+                .message
+                .contains("exited with code 2")
+        );
     }
 
     #[test]
     fn parse_duration_milliseconds() {
         assert_eq!(parse_duration_str("5ms"), Some(Duration::from_millis(5)));
-        assert_eq!(parse_duration_str("123ms"), Some(Duration::from_millis(123)));
+        assert_eq!(
+            parse_duration_str("123ms"),
+            Some(Duration::from_millis(123))
+        );
         assert_eq!(parse_duration_str("0ms"), Some(Duration::from_millis(0)));
     }
 
@@ -431,18 +429,12 @@ mod tests {
 
     #[test]
     fn parse_duration_with_parens() {
-        assert_eq!(
-            parse_duration_str("(5ms)"),
-            Some(Duration::from_millis(5))
-        );
+        assert_eq!(parse_duration_str("(5ms)"), Some(Duration::from_millis(5)));
     }
 
     #[test]
     fn parse_duration_minutes() {
-        assert_eq!(
-            parse_duration_str("1.5min"),
-            Some(Duration::from_secs(90))
-        );
+        assert_eq!(parse_duration_str("1.5min"), Some(Duration::from_secs(90)));
     }
 
     #[test]
@@ -483,14 +475,8 @@ mod tests {
 
     #[test]
     fn extract_count_multiple_keywords() {
-        assert_eq!(
-            extract_count("5 passed", &["passed", "ok"]),
-            Some(5)
-        );
-        assert_eq!(
-            extract_count("5 ok", &["passed", "ok"]),
-            Some(5)
-        );
+        assert_eq!(extract_count("5 passed", &["passed", "ok"]), Some(5));
+        assert_eq!(extract_count("5 ok", &["passed", "ok"]), Some(5));
     }
 
     #[test]
@@ -561,15 +547,24 @@ mod tests {
         let tests = synthetic_tests_from_counts(&counts, "tests");
         assert_eq!(tests.len(), 4);
         assert_eq!(
-            tests.iter().filter(|t| t.status == TestStatus::Passed).count(),
+            tests
+                .iter()
+                .filter(|t| t.status == TestStatus::Passed)
+                .count(),
             2
         );
         assert_eq!(
-            tests.iter().filter(|t| t.status == TestStatus::Failed).count(),
+            tests
+                .iter()
+                .filter(|t| t.status == TestStatus::Failed)
+                .count(),
             1
         );
         assert_eq!(
-            tests.iter().filter(|t| t.status == TestStatus::Skipped).count(),
+            tests
+                .iter()
+                .filter(|t| t.status == TestStatus::Skipped)
+                .count(),
             1
         );
     }
@@ -595,7 +590,10 @@ mod tests {
         let cmd = build_test_command("echo", dir.path(), &["hello"], &[]);
         let program = cmd.get_program().to_string_lossy();
         assert_eq!(program, "echo");
-        let args: Vec<_> = cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect();
+        let args: Vec<_> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
         assert_eq!(args, vec!["hello"]);
     }
 
@@ -604,7 +602,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let extra = vec!["--verbose".to_string(), "--color".to_string()];
         let cmd = build_test_command("cargo", dir.path(), &["test"], &extra);
-        let args: Vec<_> = cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect();
+        let args: Vec<_> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
         assert_eq!(args, vec!["test", "--verbose", "--color"]);
     }
 

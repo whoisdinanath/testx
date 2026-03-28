@@ -244,8 +244,8 @@ mod tests {
     #[test]
     fn summary_contains_totals() {
         let summary = format_coverage_summary(&make_result());
-        assert!(summary.contains("270"));  // covered
-        assert!(summary.contains("350"));  // total
+        assert!(summary.contains("270")); // covered
+        assert!(summary.contains("350")); // total
     }
 
     #[test]

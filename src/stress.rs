@@ -244,7 +244,11 @@ fn analyze_flaky_tests(iterations: &[IterationResult]) -> Vec<FlakyTestReport> {
         .collect();
 
     // Sort by pass rate (lowest = most flaky)
-    flaky_tests.sort_by(|a, b| a.pass_rate.partial_cmp(&b.pass_rate).unwrap_or(std::cmp::Ordering::Equal));
+    flaky_tests.sort_by(|a, b| {
+        a.pass_rate
+            .partial_cmp(&b.pass_rate)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     flaky_tests
 }
@@ -599,20 +603,34 @@ mod tests {
                     tests: vec![
                         TestCase {
                             name: "test_a".to_string(),
-                            status: if i == 0 { TestStatus::Passed } else { TestStatus::Failed },
+                            status: if i == 0 {
+                                TestStatus::Passed
+                            } else {
+                                TestStatus::Failed
+                            },
                             duration: Duration::from_millis(10),
                             error: if i == 0 {
                                 None
                             } else {
-                                Some(TestError { message: "fail".into(), location: None })
+                                Some(TestError {
+                                    message: "fail".into(),
+                                    location: None,
+                                })
                             },
                         },
                         TestCase {
                             name: "test_b".to_string(),
-                            status: if i == 2 { TestStatus::Failed } else { TestStatus::Passed },
+                            status: if i == 2 {
+                                TestStatus::Failed
+                            } else {
+                                TestStatus::Passed
+                            },
                             duration: Duration::from_millis(10),
                             error: if i == 2 {
-                                Some(TestError { message: "fail".into(), location: None })
+                                Some(TestError {
+                                    message: "fail".into(),
+                                    location: None,
+                                })
                             } else {
                                 None
                             },

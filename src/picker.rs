@@ -157,10 +157,7 @@ pub fn highlight_match(text: &str, matched_indices: &[usize]) -> String {
 
 /// Interactive test picker using stdin/stdout.
 /// Returns the selected test names.
-pub fn interactive_pick(
-    test_names: &[String],
-    prompt: &str,
-) -> io::Result<Vec<String>> {
+pub fn interactive_pick(test_names: &[String], prompt: &str) -> io::Result<Vec<String>> {
     if test_names.is_empty() {
         eprintln!("No tests available to pick from.");
         return Ok(vec![]);
@@ -370,10 +367,7 @@ mod tests {
 
     #[test]
     fn fuzzy_match_word_boundary_bonus() {
-        let items = vec![
-            "xyzparseabc".to_string(),
-            "test_parse_output".to_string(),
-        ];
+        let items = vec!["xyzparseabc".to_string(), "test_parse_output".to_string()];
         let results = fuzzy_match("parse", &items);
         // "test_parse_output" should score higher due to word boundary at _p
         assert_eq!(results.len(), 2);
@@ -464,10 +458,7 @@ mod tests {
 
     #[test]
     fn prefix_match_scored_higher() {
-        let items = vec![
-            "zzz_test".to_string(),
-            "test_zzz".to_string(),
-        ];
+        let items = vec!["zzz_test".to_string(), "test_zzz".to_string()];
         let results = fuzzy_match("test", &items);
         assert_eq!(results.len(), 2);
         // "test_zzz" starts with "test", should score higher
@@ -476,10 +467,7 @@ mod tests {
 
     #[test]
     fn consecutive_matches_bonus() {
-        let items = vec![
-            "t_e_s_t".to_string(),
-            "test_xyz".to_string(),
-        ];
+        let items = vec!["t_e_s_t".to_string(), "test_xyz".to_string()];
         let results = fuzzy_match("test", &items);
         assert_eq!(results.len(), 2);
         // "test_xyz" has consecutive matches for "test", should score higher

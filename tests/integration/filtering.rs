@@ -1,8 +1,8 @@
 //! Integration tests for filtering functionality.
 
 use assert_cmd::Command;
-use tempfile::TempDir;
 use std::fs;
+use tempfile::TempDir;
 
 fn setup_rust_project(dir: &TempDir) {
     fs::write(
@@ -53,7 +53,13 @@ fn filter_by_name_pattern() {
 
     let result = Command::cargo_bin("testx")
         .unwrap()
-        .args(["run", "--path", dir.path().to_str().unwrap(), "--", "test_alpha"])
+        .args([
+            "run",
+            "--path",
+            dir.path().to_str().unwrap(),
+            "--",
+            "test_alpha",
+        ])
         .output()
         .unwrap();
 
@@ -76,7 +82,9 @@ fn detect_finds_rust_project() {
         .unwrap();
 
     let stdout = String::from_utf8_lossy(&result.stdout);
-    assert!(stdout.contains("cargo test") || stdout.contains("Rust") || stdout.contains("Detected"));
+    assert!(
+        stdout.contains("cargo test") || stdout.contains("Rust") || stdout.contains("Detected")
+    );
 }
 
 #[test]

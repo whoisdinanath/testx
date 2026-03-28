@@ -59,11 +59,7 @@ impl RubyAdapter {
         {
             let has_ruby_files = entries
                 .filter_map(|e| e.ok())
-                .any(|e| {
-                    e.path()
-                        .extension()
-                        .is_some_and(|ext| ext == "rb")
-                });
+                .any(|e| e.path().extension().is_some_and(|ext| ext == "rb"));
             if has_ruby_files {
                 return Some("minitest");
             }
@@ -506,15 +502,18 @@ fn is_rspec_test_line(line: &str) -> bool {
     //   "is pending (PENDING: Not yet implemented)"
     line.contains("(FAILED")
         || line.contains("(PENDING")
-        || (line.ends_with(')')
-            && line.contains('(')
-            && line.contains("s)"))
+        || (line.ends_with(')') && line.contains('(') && line.contains("s)"))
 }
 
 /// Parse a single RSpec test result line.
 fn parse_rspec_test_line(line: &str) -> (String, TestStatus, Duration) {
     if line.contains("(FAILED") {
-        let name = line.split("(FAILED").next().unwrap_or(line).trim().to_string();
+        let name = line
+            .split("(FAILED")
+            .next()
+            .unwrap_or(line)
+            .trim()
+            .to_string();
         return (name, TestStatus::Failed, Duration::from_millis(0));
     }
 
@@ -536,7 +535,11 @@ fn parse_rspec_test_line(line: &str) -> (String, TestStatus, Duration) {
         return (name, TestStatus::Passed, duration);
     }
 
-    (line.trim().to_string(), TestStatus::Passed, Duration::from_millis(0))
+    (
+        line.trim().to_string(),
+        TestStatus::Passed,
+        Duration::from_millis(0),
+    )
 }
 
 /// Parse inline duration from "0.02s)" or "0.02 seconds)".
@@ -570,20 +573,21 @@ fn parse_minitest_verbose(output: &str) -> Vec<TestSuite> {
 
         // Format: "ClassName#test_name = TIME s = STATUS"
         if let Some((class_test, rest)) = trimmed.split_once(" = ")
-            && let Some((class, test)) = class_test.split_once('#') {
-                // Extract duration and status
-                let (duration, status) = parse_minitest_verbose_result(rest);
+            && let Some((class, test)) = class_test.split_once('#')
+        {
+            // Extract duration and status
+            let (duration, status) = parse_minitest_verbose_result(rest);
 
-                suites_map
-                    .entry(class.to_string())
-                    .or_default()
-                    .push(TestCase {
-                        name: test.to_string(),
-                        status,
-                        duration,
-                        error: None,
-                    });
-            }
+            suites_map
+                .entry(class.to_string())
+                .or_default()
+                .push(TestCase {
+                    name: test.to_string(),
+                    status,
+                    duration,
+                    error: None,
+                });
+        }
     }
 
     let mut suites: Vec<TestSuite> = suites_map
@@ -785,10 +789,7 @@ fn parse_minitest_failures(output: &str) -> Vec<MinitestFailure> {
 
         // Detect failure/error header
         if (trimmed.ends_with("Failure:") || trimmed.ends_with("Error:"))
-            && trimmed
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_digit())
+            && trimmed.chars().next().is_some_and(|c| c.is_ascii_digit())
         {
             // Save previous
             if let Some(name) = current_name.take() {
@@ -876,18 +877,20 @@ fn enrich_with_errors(
                 .map(|mut test| {
                     if test.status == TestStatus::Failed && test.error.is_none() {
                         // Try to find matching RSpec failure
-                        if let Some(failure) = rspec_failures.iter().find(|f| {
-                            f.name.contains(&test.name) || test.name.contains(&f.name)
-                        }) {
+                        if let Some(failure) = rspec_failures
+                            .iter()
+                            .find(|f| f.name.contains(&test.name) || test.name.contains(&f.name))
+                        {
                             test.error = Some(TestError {
                                 message: truncate_message(&failure.message, 500),
                                 location: failure.location.clone(),
                             });
                         }
                         // Try to find matching Minitest failure
-                        else if let Some(failure) = minitest_failures.iter().find(|f| {
-                            f.name == test.name || test.name.contains(&f.name)
-                        }) {
+                        else if let Some(failure) = minitest_failures
+                            .iter()
+                            .find(|f| f.name == test.name || test.name.contains(&f.name))
+                        {
                             test.error = Some(TestError {
                                 message: truncate_message(&failure.message, 500),
                                 location: failure.location.clone(),
@@ -1192,11 +1195,13 @@ Finished in 0.05 seconds
 
         assert_eq!(failures[0].name, "Calculator adds two numbers");
         assert!(failures[0].message.contains("expected: 5"));
-        assert!(failures[0]
-            .location
-            .as_ref()
-            .unwrap()
-            .contains("calculator_spec.rb:25"));
+        assert!(
+            failures[0]
+                .location
+                .as_ref()
+                .unwrap()
+                .contains("calculator_spec.rb:25")
+        );
 
         assert_eq!(failures[1].name, "User validates email");
         assert!(failures[1].message.contains("expected valid?"));
@@ -1418,11 +1423,7 @@ Expected: true
     #[test]
     fn detect_minitest_via_rakefile() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            dir.path().join("Rakefile"),
-            "require 'rake/testtask'\n",
-        )
-        .unwrap();
+        std::fs::write(dir.path().join("Rakefile"), "require 'rake/testtask'\n").unwrap();
         let adapter = RubyAdapter::new();
         let det = adapter.detect(dir.path()).unwrap();
         assert_eq!(det.framework, "minitest");

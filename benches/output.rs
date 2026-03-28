@@ -77,14 +77,25 @@ fn bench_junit_xml_output(c: &mut Criterion) {
             output.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
             output.push_str("<testsuites>\n");
             for suite in &result.suites {
-                output.push_str(&format!("  <testsuite name=\"{}\" tests=\"{}\">\n", suite.name, suite.tests.len()));
+                output.push_str(&format!(
+                    "  <testsuite name=\"{}\" tests=\"{}\">\n",
+                    suite.name,
+                    suite.tests.len()
+                ));
                 for test in &suite.tests {
-                    output.push_str(&format!("    <testcase name=\"{}\" time=\"{:.3}\"", test.name, test.duration.as_secs_f64()));
+                    output.push_str(&format!(
+                        "    <testcase name=\"{}\" time=\"{:.3}\"",
+                        test.name,
+                        test.duration.as_secs_f64()
+                    ));
                     match test.status {
                         TestStatus::Failed => {
                             output.push_str(">\n");
                             if let Some(err) = &test.error {
-                                output.push_str(&format!("      <failure message=\"{}\"/>\n", err.message));
+                                output.push_str(&format!(
+                                    "      <failure message=\"{}\"/>\n",
+                                    err.message
+                                ));
                             }
                             output.push_str("    </testcase>\n");
                         }

@@ -3,8 +3,7 @@ use std::time::Duration;
 use crate::adapters::{TestCase, TestRunResult, TestStatus, TestSuite};
 
 /// Strategy for computing delay between retries.
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub enum BackoffStrategy {
     /// No delay between retries
     #[default]
@@ -32,7 +31,6 @@ impl BackoffStrategy {
         }
     }
 }
-
 
 /// Configuration for retry behavior.
 #[derive(Debug, Clone)]
@@ -173,10 +171,7 @@ pub fn merge_retry_result(original: &TestRunResult, retry: &TestRunResult) -> Te
 
     for orig_suite in &original.suites {
         // Find matching suite in retry result
-        let retry_suite = retry
-            .suites
-            .iter()
-            .find(|s| s.name == orig_suite.name);
+        let retry_suite = retry.suites.iter().find(|s| s.name == orig_suite.name);
 
         let tests: Vec<TestCase> = orig_suite
             .tests
@@ -189,10 +184,11 @@ pub fn merge_retry_result(original: &TestRunResult, retry: &TestRunResult) -> Te
                 // Look for this test in the retry result
                 if let Some(rs) = retry_suite
                     && let Some(retry_test) = rs.tests.iter().find(|t| t.name == orig_test.name)
-                        && retry_test.status == TestStatus::Passed {
-                            // Test was fixed by retry
-                            return retry_test.clone();
-                        }
+                    && retry_test.status == TestStatus::Passed
+                {
+                    // Test was fixed by retry
+                    return retry_test.clone();
+                }
 
                 orig_test.clone()
             })
@@ -437,9 +433,7 @@ mod tests {
             ),
             make_suite(
                 "strings",
-                vec![
-                    make_test("test_concat", TestStatus::Failed),
-                ],
+                vec![make_test("test_concat", TestStatus::Failed)],
             ),
         ]);
 

@@ -235,10 +235,7 @@ impl Config {
 
     /// Check if watch mode is enabled (via config or CLI).
     pub fn is_watch_enabled(&self) -> bool {
-        self.watch
-            .as_ref()
-            .map(|w| w.enabled)
-            .unwrap_or(false)
+        self.watch.as_ref().map(|w| w.enabled).unwrap_or(false)
     }
 }
 

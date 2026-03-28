@@ -4,6 +4,7 @@
 //! `notify-send` (Linux), `osascript` (macOS), or
 //! `powershell` (Windows).
 
+#[cfg(not(test))]
 use std::process::Command;
 
 use crate::adapters::TestRunResult;
@@ -126,6 +127,7 @@ pub fn build_notification(result: &TestRunResult, config: &NotifyConfig) -> Noti
 }
 
 /// Send a notification using OS-specific tools.
+#[cfg(not(test))]
 fn send_notification(notification: &Notification, config: &NotifyConfig) -> std::io::Result<()> {
     #[cfg(target_os = "linux")]
     {
@@ -146,14 +148,13 @@ fn send_notification(notification: &Notification, config: &NotifyConfig) -> std:
 }
 
 /// Send notification via `notify-send` on Linux.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(test)))]
 fn send_linux(notification: &Notification, config: &NotifyConfig) -> std::io::Result<()> {
     let mut cmd = Command::new("notify-send");
     cmd.arg("--urgency").arg(&notification.urgency);
 
     if config.timeout_ms > 0 {
-        cmd.arg("--expire-time")
-            .arg(config.timeout_ms.to_string());
+        cmd.arg("--expire-time").arg(config.timeout_ms.to_string());
     }
 
     cmd.arg(&notification.title).arg(&notification.body);
@@ -163,7 +164,7 @@ fn send_linux(notification: &Notification, config: &NotifyConfig) -> std::io::Re
 }
 
 /// Send notification via `osascript` on macOS.
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(test)))]
 fn send_macos(notification: &Notification, _config: &NotifyConfig) -> std::io::Result<()> {
     let script = format!(
         "display notification \"{}\" with title \"{}\"",
@@ -171,23 +172,28 @@ fn send_macos(notification: &Notification, _config: &NotifyConfig) -> std::io::R
         notification.title.replace('"', "\\\""),
     );
 
-    Command::new("osascript")
-        .arg("-e")
-        .arg(&script)
-        .output()?;
+    Command::new("osascript").arg("-e").arg(&script).output()?;
     Ok(())
 }
 
 /// Send notification via PowerShell on Windows.
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "windows", not(test)))]
 fn send_windows(notification: &Notification, _config: &NotifyConfig) -> std::io::Result<()> {
     let script = format!(
         "[Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime] | Out-Null; \
         $xml = '<toast><visual><binding template=\"ToastText02\"><text id=\"1\">{}</text><text id=\"2\">{}</text></binding></visual></toast>'; \
         $toast = [Windows.UI.Notifications.ToastNotification]::new([xml]$xml); \
         [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('testx').Show($toast)",
-        notification.title.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;"),
-        notification.body.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;"),
+        notification
+            .title
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;"),
+        notification
+            .body
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;"),
     );
 
     Command::new("powershell")
@@ -200,8 +206,8 @@ fn send_windows(notification: &Notification, _config: &NotifyConfig) -> std::io:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::{TestCase, TestSuite};
     use crate::adapters::TestStatus;
+    use crate::adapters::{TestCase, TestSuite};
     use std::time::Duration;
 
     fn make_test(name: &str, status: TestStatus, ms: u64) -> TestCase {

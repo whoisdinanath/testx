@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use crate::config::WatchConfig;
 use crate::watcher::debouncer::Debouncer;
-use crate::watcher::glob::{should_ignore, GlobPattern};
+use crate::watcher::glob::{GlobPattern, should_ignore};
 
 /// File system watcher that detects changes in a project directory.
 pub struct FileWatcher {
@@ -23,11 +23,8 @@ pub struct FileWatcher {
 impl FileWatcher {
     /// Create a new file watcher for the given directory.
     pub fn new(root: &Path, config: &WatchConfig) -> std::io::Result<Self> {
-        let ignore_patterns: Vec<GlobPattern> = config
-            .ignore
-            .iter()
-            .map(|p| GlobPattern::new(p))
-            .collect();
+        let ignore_patterns: Vec<GlobPattern> =
+            config.ignore.iter().map(|p| GlobPattern::new(p)).collect();
 
         let debouncer = Debouncer::new(config.debounce_ms);
         let (tx, rx) = mpsc::channel();
@@ -57,19 +54,19 @@ impl FileWatcher {
                         None => true, // new file
                     };
 
-                    if changed
-                        && tx.send(path.clone()).is_err() {
-                            return; // receiver dropped, stop watching
-                        }
+                    if changed && tx.send(path.clone()).is_err() {
+                        return; // receiver dropped, stop watching
+                    }
                 }
 
                 // Find deleted files (send parent dir)
                 for path in &known_files {
                     if !current_files.contains(path)
                         && let Some(parent) = path.parent()
-                            && tx.send(parent.to_path_buf()).is_err() {
-                                return;
-                            }
+                        && tx.send(parent.to_path_buf()).is_err()
+                    {
+                        return;
+                    }
                 }
 
                 known_files = current_files;
@@ -176,9 +173,9 @@ fn collect_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) {
                 || name == "target"
                 || name == "__pycache__"
                 || name == ".testx")
-            {
-                continue;
-            }
+        {
+            continue;
+        }
 
         if path.is_dir() {
             collect_files_recursive(&path, files);
@@ -193,9 +190,10 @@ fn get_mtimes(files: &[PathBuf]) -> std::collections::HashMap<PathBuf, std::time
     let mut mtimes = std::collections::HashMap::new();
     for file in files {
         if let Ok(meta) = std::fs::metadata(file)
-            && let Ok(mtime) = meta.modified() {
-                mtimes.insert(file.clone(), mtime);
-            }
+            && let Ok(mtime) = meta.modified()
+        {
+            mtimes.insert(file.clone(), mtime);
+        }
     }
     mtimes
 }

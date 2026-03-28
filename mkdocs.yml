@@ -1,0 +1,62 @@
+site_name: testx
+site_url: https://testx.readthedocs.io/
+site_description: "Universal test runner — one command to test any project"
+site_author: Dinanath
+
+repo_url: https://github.com/whoisdinanath/testx
+repo_name: whoisdinanath/testx
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - content.code.copy
+    - search.highlight
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: getting-started/installation.md
+      - Quick Start: getting-started/quickstart.md
+  - Guide:
+      - Output Formats: guide/output-formats.md
+      - CI Sharding: guide/sharding.md
+      - Flaky Test Detection: guide/stress-testing.md
+      - Impact Analysis: guide/impact-analysis.md
+      - Smart Caching: guide/caching.md
+      - Interactive Picker: guide/picker.md
+      - Configuration: guide/configuration.md
+      - Plugins: guide/plugins.md
+  - Languages:
+      - Overview: languages/index.md
+  - CLI Reference: cli.md
+  - Changelog: changelog.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true

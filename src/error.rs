@@ -75,11 +75,7 @@ impl fmt::Display for TestxError {
                 )
             }
             TestxError::ExecutionFailed { command, source } => {
-                write!(
-                    f,
-                    "Failed to execute command '{}': {}",
-                    command, source
-                )
+                write!(f, "Failed to execute command '{}': {}", command, source)
             }
             TestxError::Timeout { seconds } => {
                 write!(f, "Test process timed out after {}s", seconds)

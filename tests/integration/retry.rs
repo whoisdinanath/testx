@@ -1,8 +1,8 @@
 //! Integration tests for retry functionality.
 
 use assert_cmd::Command;
-use tempfile::TempDir;
 use std::fs;
+use tempfile::TempDir;
 
 #[test]
 fn run_with_timeout_flag() {
@@ -68,12 +68,7 @@ edition = "2021"
 
     let result = Command::cargo_bin("testx")
         .unwrap()
-        .args([
-            "run",
-            "--path",
-            dir.path().to_str().unwrap(),
-            "--verbose",
-        ])
+        .args(["run", "--path", dir.path().to_str().unwrap(), "--verbose"])
         .output()
         .unwrap();
 
@@ -112,12 +107,7 @@ mod tests {
 
     let result = Command::cargo_bin("testx")
         .unwrap()
-        .args([
-            "run",
-            "--path",
-            dir.path().to_str().unwrap(),
-            "--raw",
-        ])
+        .args(["run", "--path", dir.path().to_str().unwrap(), "--raw"])
         .output()
         .unwrap();
 

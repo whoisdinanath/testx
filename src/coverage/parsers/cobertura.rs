@@ -41,7 +41,13 @@ pub fn parse_cobertura(content: &str) -> CoverageResult {
         if let Some(filename) = extract_attr(trimmed, "class", "filename") {
             // Finalize previous file if any
             if let Some(path) = current_path.take() {
-                finalize_file(&mut files, path, &line_hits, total_branches, covered_branches);
+                finalize_file(
+                    &mut files,
+                    path,
+                    &line_hits,
+                    total_branches,
+                    covered_branches,
+                );
             }
             current_path = Some(filename);
             line_hits.clear();
@@ -54,35 +60,49 @@ pub fn parse_cobertura(content: &str) -> CoverageResult {
             if let (Some(number), Some(hits)) = (
                 extract_attr_value(trimmed, "number"),
                 extract_attr_value(trimmed, "hits"),
-            )
-                && let (Ok(num), Ok(hit_count)) = (number.parse::<usize>(), hits.parse::<u64>()) {
-                    let entry = line_hits.entry(num).or_insert(0);
-                    *entry = (*entry).max(hit_count);
-                }
+            ) && let (Ok(num), Ok(hit_count)) = (number.parse::<usize>(), hits.parse::<u64>())
+            {
+                let entry = line_hits.entry(num).or_insert(0);
+                *entry = (*entry).max(hit_count);
+            }
 
             // Check for branch coverage
             if let Some(branch) = extract_attr_value(trimmed, "branch")
                 && branch == "true"
-                    && let Some(cond) = extract_attr_value(trimmed, "condition-coverage") {
-                        let (br_total, br_covered) = parse_condition_coverage(&cond);
-                        total_branches += br_total;
-                        covered_branches += br_covered;
-                    }
+                && let Some(cond) = extract_attr_value(trimmed, "condition-coverage")
+            {
+                let (br_total, br_covered) = parse_condition_coverage(&cond);
+                total_branches += br_total;
+                covered_branches += br_covered;
+            }
         }
 
         // End of class
         if (trimmed == "</class>" || trimmed.starts_with("</class>"))
-            && let Some(path) = current_path.take() {
-                finalize_file(&mut files, path, &line_hits, total_branches, covered_branches);
-                line_hits.clear();
-                total_branches = 0;
-                covered_branches = 0;
-            }
+            && let Some(path) = current_path.take()
+        {
+            finalize_file(
+                &mut files,
+                path,
+                &line_hits,
+                total_branches,
+                covered_branches,
+            );
+            line_hits.clear();
+            total_branches = 0;
+            covered_branches = 0;
+        }
     }
 
     // Handle leftover
     if let Some(path) = current_path.take() {
-        finalize_file(&mut files, path, &line_hits, total_branches, covered_branches);
+        finalize_file(
+            &mut files,
+            path,
+            &line_hits,
+            total_branches,
+            covered_branches,
+        );
     }
 
     CoverageResult::from_files(files)
@@ -132,14 +152,15 @@ fn extract_attr_value(line: &str, attr: &str) -> Option<String> {
 fn parse_condition_coverage(cond: &str) -> (usize, usize) {
     // Format: "50% (1/2)"
     if let Some(paren_start) = cond.find('(')
-        && let Some(paren_end) = cond.find(')') {
-            let inner = &cond[paren_start + 1..paren_end];
-            if let Some((covered_str, total_str)) = inner.split_once('/') {
-                let covered = covered_str.trim().parse().unwrap_or(0);
-                let total = total_str.trim().parse().unwrap_or(0);
-                return (total, covered);
-            }
+        && let Some(paren_end) = cond.find(')')
+    {
+        let inner = &cond[paren_start + 1..paren_end];
+        if let Some((covered_str, total_str)) = inner.split_once('/') {
+            let covered = covered_str.trim().parse().unwrap_or(0);
+            let total = total_str.trim().parse().unwrap_or(0);
+            return (total, covered);
         }
+    }
     (0, 0)
 }
 
@@ -243,10 +264,7 @@ mod tests {
             extract_attr_value(r#"<line number="42" hits="5"/>"#, "number"),
             Some("42".into())
         );
-        assert_eq!(
-            extract_attr_value(r#"<line number="1"/>"#, "hits"),
-            None
-        );
+        assert_eq!(extract_attr_value(r#"<line number="1"/>"#, "hits"), None);
     }
 
     #[test]

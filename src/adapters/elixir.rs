@@ -5,7 +5,9 @@ use std::time::Duration;
 use anyhow::Result;
 
 use super::util::duration_from_secs_safe;
-use super::{DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus, TestSuite};
+use super::{
+    DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus, TestSuite,
+};
 
 pub struct ElixirAdapter;
 
@@ -282,16 +284,18 @@ fn parse_trace_test_line(s: &str) -> (String, Duration, TestStatus) {
     let mut status = TestStatus::Passed;
 
     if let Some(paren_start) = s.find('(')
-        && let Some(paren_end) = s[paren_start..].find(')') {
-            let time_str = &s[paren_start + 1..paren_start + paren_end];
+        && let Some(paren_end) = s[paren_start..].find(')')
+    {
+        let time_str = &s[paren_start + 1..paren_start + paren_end];
 
-            if let Some(num) = time_str.strip_suffix("ms")
-                && let Ok(ms) = num.parse::<f64>() {
-                    duration = duration_from_secs_safe(ms / 1000.0);
-                }
-
-            name = s[..paren_start].trim().to_string();
+        if let Some(num) = time_str.strip_suffix("ms")
+            && let Ok(ms) = num.parse::<f64>()
+        {
+            duration = duration_from_secs_safe(ms / 1000.0);
         }
+
+        name = s[..paren_start].trim().to_string();
+    }
 
     // Remove trailing "[L#N]" location marker
     if let Some(bracket_idx) = name.rfind('[') {
@@ -445,10 +449,7 @@ fn parse_exunit_failure_header(line: &str) -> Option<(String, String)> {
 }
 
 /// Enrich ExUnit test cases with error details from failure blocks.
-fn enrich_exunit_errors(
-    suites: Vec<TestSuite>,
-    failures: &[ExUnitFailure],
-) -> Vec<TestSuite> {
+fn enrich_exunit_errors(suites: Vec<TestSuite>, failures: &[ExUnitFailure]) -> Vec<TestSuite> {
     suites
         .into_iter()
         .map(|suite| {
@@ -457,10 +458,10 @@ fn enrich_exunit_errors(
                 .into_iter()
                 .map(|mut test| {
                     // Check if this test has a matching failure
-                    if let Some(failure) = failures.iter().find(|f| {
-                        f.name.contains(&test.name)
-                            || test.name.contains(&f.name)
-                    }) {
+                    if let Some(failure) = failures
+                        .iter()
+                        .find(|f| f.name.contains(&test.name) || test.name.contains(&f.name))
+                    {
                         // Mark as failed if it was parsed as passed but has a failure
                         test.status = TestStatus::Failed;
                         if test.error.is_none() {
@@ -608,7 +609,10 @@ Finished in 0.02 seconds
         let suites = parse_exunit_trace(output);
         let all_tests: Vec<_> = suites.iter().flat_map(|s| &s.tests).collect();
 
-        let excluded: Vec<_> = all_tests.iter().filter(|t| t.status == TestStatus::Skipped).collect();
+        let excluded: Vec<_> = all_tests
+            .iter()
+            .filter(|t| t.status == TestStatus::Skipped)
+            .collect();
         assert_eq!(excluded.len(), 1);
     }
 
@@ -662,7 +666,10 @@ Finished in 0.03 seconds
         assert_eq!(failures[0].name, "adds two numbers");
         assert_eq!(failures[0].module, "MyApp.CalculatorTest");
         assert!(failures[0].message.contains("Assertion with == failed"));
-        assert_eq!(failures[0].location.as_ref().unwrap(), "test/calculator_test.exs:5");
+        assert_eq!(
+            failures[0].location.as_ref().unwrap(),
+            "test/calculator_test.exs:5"
+        );
 
         assert_eq!(failures[1].name, "subtracts");
     }
@@ -735,7 +742,13 @@ Finished in 0.03 seconds (0.02s async, 0.01s sync)
         let enriched = enrich_exunit_errors(suites, &failures);
         let test = &enriched[0].tests[0];
         assert!(test.error.is_some());
-        assert!(test.error.as_ref().unwrap().message.contains("Assertion failed"));
+        assert!(
+            test.error
+                .as_ref()
+                .unwrap()
+                .message
+                .contains("Assertion failed")
+        );
     }
 
     #[test]

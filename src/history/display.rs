@@ -28,12 +28,7 @@ pub fn format_recent_runs(history: &TestHistory, n: usize) -> String {
     let _ = writeln!(
         out,
         "  {:<22}  {:>5}  {:>5}  {:>5}  {:>5}  {:>8}  ──────",
-        "──────────────────────",
-        "─────",
-        "─────",
-        "─────",
-        "─────",
-        "────────"
+        "──────────────────────", "─────", "─────", "─────", "─────", "────────"
     );
 
     for run in runs.iter().rev() {
@@ -77,10 +72,7 @@ pub fn format_flaky_tests(flaky: &[FlakyTest]) -> String {
     let _ = writeln!(
         out,
         "  {:<40}  {:>8}  {:>6}  {:>5}  ──────────",
-        "────────────────────────────────────────",
-        "────────",
-        "──────",
-        "─────"
+        "────────────────────────────────────────", "────────", "──────", "─────"
     );
 
     for test in flaky {
@@ -126,10 +118,7 @@ pub fn format_slow_tests(slow: &[SlowTest]) -> String {
     let _ = writeln!(
         out,
         "  {:<40}  {:>8}  {:>8}  {:>8}  ─────",
-        "────────────────────────────────────────",
-        "────────",
-        "────────",
-        "────────"
+        "────────────────────────────────────────", "────────", "────────", "────────"
     );
 
     for test in slow.iter().take(20) {
@@ -180,7 +169,11 @@ pub fn format_test_trend(test_name: &str, trend: &[TestTrend]) -> String {
     let _ = writeln!(out);
 
     let _ = writeln!(out, "  {:<22}  {:>8}  Status", "Timestamp", "Duration");
-    let _ = writeln!(out, "  {:<22}  {:>8}  ──────", "──────────────────────", "────────");
+    let _ = writeln!(
+        out,
+        "  {:<22}  {:>8}  ──────",
+        "──────────────────────", "────────"
+    );
 
     for point in trend.iter().rev().take(20) {
         let status = match point.status.as_str() {

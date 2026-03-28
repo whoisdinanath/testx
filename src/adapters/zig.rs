@@ -5,7 +5,9 @@ use std::time::Duration;
 use anyhow::Result;
 
 use super::util::duration_from_secs_safe;
-use super::{DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus, TestSuite};
+use super::{
+    DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus, TestSuite,
+};
 
 pub struct ZigAdapter;
 
@@ -427,7 +429,10 @@ fn find_zig_error_message(lines: &[String]) -> String {
             return line.clone();
         }
     }
-    lines.first().cloned().unwrap_or_else(|| "Test failed".to_string())
+    lines
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "Test failed".to_string())
 }
 
 /// Check if a line is a Zig compile error.
@@ -670,7 +675,9 @@ thread 12345 panic: integer overflow
         ));
         assert!(is_zig_source_location("src/math.zig:10:12: error"));
         assert!(!is_zig_source_location("not a location"));
-        assert!(!is_zig_source_location("some text.zig without colon numbers"));
+        assert!(!is_zig_source_location(
+            "some text.zig without colon numbers"
+        ));
     }
 
     #[test]

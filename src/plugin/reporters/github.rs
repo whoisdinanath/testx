@@ -149,14 +149,15 @@ fn write_annotations(lines: &mut Vec<String>, suite: &TestSuite) {
         // Extract file/line from error location if available
         if let Some(ref error) = test.error
             && let Some(ref loc) = error.location
-                && let Some((file, line)) = parse_location(loc) {
-                    lines.push(format!(
-                        "::error file={file},line={line},title={}::{}",
-                        escape_workflow_value(&test.name),
-                        escape_workflow_value(&msg),
-                    ));
-                    continue;
-                }
+            && let Some((file, line)) = parse_location(loc)
+        {
+            lines.push(format!(
+                "::error file={file},line={line},title={}::{}",
+                escape_workflow_value(&test.name),
+                escape_workflow_value(&msg),
+            ));
+            continue;
+        }
 
         lines.push(format!(
             "::error title={} ({})::{msg}",
@@ -176,10 +177,7 @@ fn write_step_summary_commands(lines: &mut Vec<String>, result: &TestRunResult) 
 
     let _ = writeln!(md, "### Test Results — {icon}");
     md.push('\n');
-    let _ = writeln!(
-        md,
-        "| Total | Passed | Failed | Skipped | Duration |"
-    );
+    let _ = writeln!(md, "| Total | Passed | Failed | Skipped | Duration |");
     let _ = writeln!(md, "| ----- | ------ | ------ | ------- | -------- |");
     let _ = writeln!(
         md,

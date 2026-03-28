@@ -199,31 +199,33 @@ fn parse_json_suites(value: &serde_json::Value) -> Vec<TestSuite> {
 
     // Handle {"tests": [...]} format (single suite)
     if suites.is_empty()
-        && let Some(arr) = value.get("tests").and_then(|v| v.as_array()) {
-            let name = value
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("tests");
-            let tests: Vec<TestCase> = arr.iter().filter_map(parse_json_test).collect();
-            if !tests.is_empty() {
-                suites.push(TestSuite {
-                    name: name.to_string(),
-                    tests,
-                });
-            }
+        && let Some(arr) = value.get("tests").and_then(|v| v.as_array())
+    {
+        let name = value
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("tests");
+        let tests: Vec<TestCase> = arr.iter().filter_map(parse_json_test).collect();
+        if !tests.is_empty() {
+            suites.push(TestSuite {
+                name: name.to_string(),
+                tests,
+            });
         }
+    }
 
     // Handle [{"name": ..., "status": ...}, ...] format (flat array of tests)
     if suites.is_empty()
-        && let Some(arr) = value.as_array() {
-            let tests: Vec<TestCase> = arr.iter().filter_map(parse_json_test).collect();
-            if !tests.is_empty() {
-                suites.push(TestSuite {
-                    name: "tests".to_string(),
-                    tests,
-                });
-            }
+        && let Some(arr) = value.as_array()
+    {
+        let tests: Vec<TestCase> = arr.iter().filter_map(parse_json_test).collect();
+        if !tests.is_empty() {
+            suites.push(TestSuite {
+                name: "tests".to_string(),
+                tests,
+            });
         }
+    }
 
     suites
 }
@@ -257,9 +259,12 @@ fn parse_json_test(value: &serde_json::Value) -> Option<TestCase> {
 
     let error = value.get("error").and_then(|v| {
         let message = v.as_str().map(|s| s.to_string()).or_else(|| {
-            v.get("message").and_then(|m| m.as_str().map(|s| s.to_string()))
+            v.get("message")
+                .and_then(|m| m.as_str().map(|s| s.to_string()))
         })?;
-        let location = v.get("location").and_then(|l| l.as_str().map(|s| s.to_string()));
+        let location = v
+            .get("location")
+            .and_then(|l| l.as_str().map(|s| s.to_string()));
         Some(TestError { message, location })
     });
 
@@ -278,10 +283,12 @@ fn parse_junit_output(stdout: &str, exit_code: i32) -> TestRunResult {
     // Find all <testsuite> blocks
     for line in stdout.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("<testsuite") && !trimmed.starts_with("<testsuites")
-            && let Some(suite) = parse_junit_suite_tag(trimmed, stdout) {
-                suites.push(suite);
-            }
+        if trimmed.starts_with("<testsuite")
+            && !trimmed.starts_with("<testsuites")
+            && let Some(suite) = parse_junit_suite_tag(trimmed, stdout)
+        {
+            suites.push(suite);
+        }
     }
 
     // If no suites found, try to parse <testcase> elements directly
@@ -463,9 +470,7 @@ fn parse_tap_description(rest: &str) -> (String, bool) {
         .unwrap_or(rest);
 
     // Strip leading " - "
-    let desc = after_num
-        .strip_prefix("- ")
-        .unwrap_or(after_num);
+    let desc = after_num.strip_prefix("- ").unwrap_or(after_num);
 
     // Check for # SKIP directive
     let is_skip = desc.contains("# SKIP") || desc.contains("# skip");
@@ -599,7 +604,8 @@ fn parse_regex_output(stdout: &str, config: &RegexParserConfig, exit_code: i32) 
             continue;
         }
 
-        if let Some(test) = try_regex_match(trimmed, &config.pass_pattern, TestStatus::Passed, config)
+        if let Some(test) =
+            try_regex_match(trimmed, &config.pass_pattern, TestStatus::Passed, config)
         {
             tests.push(test);
         } else if let Some(test) =
@@ -607,11 +613,10 @@ fn parse_regex_output(stdout: &str, config: &RegexParserConfig, exit_code: i32) 
         {
             tests.push(test);
         } else if let Some(ref skip_pattern) = config.skip_pattern
-            && let Some(test) =
-                try_regex_match(trimmed, skip_pattern, TestStatus::Skipped, config)
-            {
-                tests.push(test);
-            }
+            && let Some(test) = try_regex_match(trimmed, skip_pattern, TestStatus::Skipped, config)
+        {
+            tests.push(test);
+        }
     }
 
     if tests.is_empty() {
@@ -760,11 +765,7 @@ fn find_next_literal(pattern: &str, from: usize) -> Option<String> {
         i += 1;
     }
 
-    if lit.is_empty() {
-        None
-    } else {
-        Some(lit)
-    }
+    if lit.is_empty() { None } else { Some(lit) }
 }
 
 /// Generate a fallback result when parsing fails.
@@ -784,11 +785,7 @@ fn fallback_result(stdout: &str, exit_code: i32, parser_name: &str) -> TestRunRe
                 duration: Duration::ZERO,
                 error: if exit_code != 0 {
                     Some(TestError {
-                        message: stdout
-                            .lines()
-                            .next()
-                            .unwrap_or("Test failed")
-                            .to_string(),
+                        message: stdout.lines().next().unwrap_or("Test failed").to_string(),
                         location: None,
                     })
                 } else {
@@ -843,7 +840,10 @@ mod tests {
         let base = PathBuf::from("/project");
 
         let config = ScriptAdapterConfig::new("test", "f", "cmd");
-        assert_eq!(config.effective_working_dir(&base), PathBuf::from("/project"));
+        assert_eq!(
+            config.effective_working_dir(&base),
+            PathBuf::from("/project")
+        );
 
         let config = config.with_working_dir("src");
         assert_eq!(

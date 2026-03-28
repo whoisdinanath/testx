@@ -33,7 +33,11 @@ fn create_python_project() -> TempDir {
     let dir = TempDir::new().unwrap();
     std::fs::write(dir.path().join("setup.py"), "").unwrap();
     std::fs::create_dir_all(dir.path().join("tests")).unwrap();
-    std::fs::write(dir.path().join("tests/test_example.py"), "def test_(): pass").unwrap();
+    std::fs::write(
+        dir.path().join("tests/test_example.py"),
+        "def test_(): pass",
+    )
+    .unwrap();
     dir
 }
 
