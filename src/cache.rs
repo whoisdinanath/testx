@@ -183,7 +183,8 @@ pub fn compute_project_hash(project_dir: &Path, adapter_name: &str) -> Result<St
 
     // Collect relevant files and their metadata
     let mut file_entries: Vec<(String, u64, u64)> = Vec::new();
-    collect_source_files(project_dir, project_dir, &mut file_entries)?;
+    let mut visited = std::collections::HashSet::new();
+    collect_source_files(project_dir, project_dir, &mut file_entries, 0, &mut visited)?;
 
     // Sort for determinism
     file_entries.sort_by(|a, b| a.0.cmp(&b.0));
@@ -198,12 +199,28 @@ pub fn compute_project_hash(project_dir: &Path, adapter_name: &str) -> Result<St
     Ok(format!("{:016x}", hash))
 }
 
+/// Maximum recursion depth for source file collection.
+const MAX_SOURCE_DEPTH: usize = 20;
+
 /// Recursively collect source files with their modification time and size.
 fn collect_source_files(
     root: &Path,
     dir: &Path,
     entries: &mut Vec<(String, u64, u64)>,
+    depth: usize,
+    visited: &mut std::collections::HashSet<std::path::PathBuf>,
 ) -> Result<()> {
+    if depth > MAX_SOURCE_DEPTH {
+        return Ok(());
+    }
+
+    // Canonicalize to avoid symlink loops
+    if let Ok(canonical) = dir.canonicalize()
+        && !visited.insert(canonical)
+    {
+        return Ok(());
+    }
+
     let read_dir = std::fs::read_dir(dir).map_err(|e| TestxError::IoError {
         context: format!("Failed to read directory: {}", dir.display()),
         source: e,
@@ -238,7 +255,7 @@ fn collect_source_files(
         })?;
 
         if file_type.is_dir() {
-            collect_source_files(root, &path, entries)?;
+            collect_source_files(root, &path, entries, depth + 1, visited)?;
         } else if file_type.is_file()
             && let Some(ext) = path.extension().and_then(|e| e.to_str())
             && is_source_extension(ext)
@@ -829,5 +846,87 @@ mod tests {
         assert!(config.enabled);
         assert_eq!(config.max_age_secs, 86400);
         assert_eq!(config.max_entries, 100);
+    }
+
+    // ─── Recursion depth safety ───
+
+    #[test]
+    fn collect_source_files_deep_nesting_no_crash() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Create a 50-level deep directory tree with source files
+        let mut current = dir.path().to_path_buf();
+        for i in 0..50 {
+            current = current.join(format!("level_{}", i));
+        }
+        std::fs::create_dir_all(&current).unwrap();
+        std::fs::write(current.join("deep.rs"), "fn deep() {}").unwrap();
+
+        // Should not crash or stack overflow
+        let hash = compute_project_hash(dir.path(), "Rust").unwrap();
+        assert!(!hash.is_empty());
+    }
+
+    #[test]
+    fn collect_source_files_respects_max_depth() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Create a tree deeper than MAX_SOURCE_DEPTH (20)
+        let mut current = dir.path().to_path_buf();
+        for i in 0..25 {
+            current = current.join(format!("d{}", i));
+        }
+        std::fs::create_dir_all(&current).unwrap();
+        std::fs::write(current.join("too_deep.rs"), "fn too_deep() {}").unwrap();
+
+        // The file at depth 25 should be unreachable
+        let mut entries = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        collect_source_files(dir.path(), dir.path(), &mut entries, 0, &mut visited).unwrap();
+
+        // No file entry should contain "too_deep" since it's past MAX_SOURCE_DEPTH
+        assert!(
+            !entries.iter().any(|(path, _, _)| path.contains("too_deep")),
+            "files beyond MAX_SOURCE_DEPTH should not be collected"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn collect_source_files_symlink_loop_safe() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("src");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(sub.join("lib.rs"), "fn lib() {}").unwrap();
+
+        // Create symlink loop: src/loop -> parent
+        std::os::unix::fs::symlink(dir.path(), sub.join("loop")).unwrap();
+
+        // Should not hang
+        let hash = compute_project_hash(dir.path(), "Rust").unwrap();
+        assert!(!hash.is_empty());
+    }
+
+    #[test]
+    fn collect_source_files_many_files_no_crash() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Create 200 source files in one directory
+        for i in 0..200 {
+            std::fs::write(
+                dir.path().join(format!("file_{}.rs", i)),
+                format!("fn f{}() {{}}", i),
+            )
+            .unwrap();
+        }
+
+        let hash = compute_project_hash(dir.path(), "Rust").unwrap();
+        assert!(!hash.is_empty());
+
+        // Verify all files were collected
+        let mut entries = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        collect_source_files(dir.path(), dir.path(), &mut entries, 0, &mut visited).unwrap();
+        assert_eq!(entries.len(), 200, "should collect all 200 source files");
     }
 }

@@ -5,7 +5,9 @@ use std::time::Duration;
 use anyhow::Result;
 
 use super::util::duration_from_secs_safe;
-use super::{DetectionResult, TestAdapter, TestCase, TestRunResult, TestStatus, TestSuite};
+use super::{
+    ConfidenceScore, DetectionResult, TestAdapter, TestCase, TestRunResult, TestStatus, TestSuite,
+};
 
 pub struct RustAdapter;
 
@@ -35,14 +37,46 @@ impl TestAdapter for RustAdapter {
     }
 
     fn detect(&self, project_dir: &Path) -> Option<DetectionResult> {
-        if !project_dir.join("Cargo.toml").exists() {
+        let cargo_toml = project_dir.join("Cargo.toml");
+        if !cargo_toml.exists() {
             return None;
         }
 
+        // Distinguish workspace roots from package roots
+        let is_workspace = std::fs::read_to_string(&cargo_toml)
+            .map(|content| content.contains("[workspace]"))
+            .unwrap_or(false);
+
+        let has_package = std::fs::read_to_string(&cargo_toml)
+            .map(|content| content.contains("[package]"))
+            .unwrap_or(false);
+
+        // Pure workspace root with no [package] — cargo test still works
+        // (runs all member tests) but confidence is lower
+        let framework = if is_workspace && !has_package {
+            "cargo test (workspace)"
+        } else if is_workspace {
+            "cargo test (workspace+package)"
+        } else {
+            "cargo test"
+        };
+
+        let confidence = ConfidenceScore::base(0.50)
+            .signal(0.20, project_dir.join("tests").is_dir())
+            .signal(0.10, project_dir.join("Cargo.lock").exists())
+            .signal(0.10, which::which("cargo").is_ok())
+            .signal(0.05, project_dir.join("src").is_dir())
+            // Pure workspace roots without src/ are less likely to be "the" test target
+            .signal(
+                -0.10,
+                is_workspace && !has_package && !project_dir.join("src").is_dir(),
+            )
+            .finish();
+
         Some(DetectionResult {
             language: "Rust".into(),
-            framework: "cargo test".into(),
-            confidence: 0.95,
+            framework: framework.into(),
+            confidence,
         })
     }
 
@@ -50,11 +84,16 @@ impl TestAdapter for RustAdapter {
         let mut cmd = Command::new("cargo");
         cmd.arg("test");
 
+        // Try to enable per-test timing on nightly (silently ignored on stable
+        // since the caller's extra_args might conflict). We detect nightly by
+        // probing `cargo +nightly` availability, but that's too expensive.
+        // Instead we rely on users passing `-- -Z unstable-options --report-time`
+        // manually if on nightly.
+
         for arg in extra_args {
             cmd.arg(arg);
         }
 
-        // Ensure unstable output isn't an issue
         cmd.current_dir(project_dir);
         Ok(cmd)
     }
@@ -91,21 +130,22 @@ impl TestAdapter for RustAdapter {
             }
 
             // "test module::test_name ... ok"
+            // "test module::test_name ... ok <0.001s>"  (--report-time on nightly)
             // "test module::test_name ... FAILED"
             // "test module::test_name ... ignored"
-            if trimmed.starts_with("test ")
-                && (trimmed.ends_with(" ok")
-                    || trimmed.ends_with(" FAILED")
-                    || trimmed.ends_with(" ignored"))
-            {
-                let without_prefix = &trimmed[5..]; // strip "test "
-
-                let status = if trimmed.ends_with(" ok") {
-                    TestStatus::Passed
+            if let Some(without_prefix) = trimmed.strip_prefix("test ") {
+                let (status, time_suffix) = if let Some(rest) = trimmed.strip_suffix(" ok") {
+                    (Some(TestStatus::Passed), rest)
                 } else if trimmed.ends_with(" FAILED") {
-                    TestStatus::Failed
+                    (Some(TestStatus::Failed), trimmed)
+                } else if trimmed.ends_with(" ignored") {
+                    (Some(TestStatus::Skipped), trimmed)
                 } else {
-                    TestStatus::Skipped
+                    (None, trimmed)
+                };
+
+                let Some(status) = status else {
+                    continue;
                 };
 
                 // Parse test name — strip " ... ok" / " ... FAILED" / " ... ignored"
@@ -119,6 +159,10 @@ impl TestAdapter for RustAdapter {
                 if let Some(last_sep) = name.rfind("::") {
                     current_suite_name = name[..last_sep].to_string();
                 }
+
+                // Try to parse per-test duration from --report-time output
+                // Format: "test name ... ok <0.123s>"
+                let duration = parse_report_time(time_suffix).unwrap_or(Duration::from_millis(0));
 
                 // Attach error message if this test failed
                 let error = if status == TestStatus::Failed {
@@ -135,7 +179,7 @@ impl TestAdapter for RustAdapter {
                 current_tests.push(TestCase {
                     name,
                     status,
-                    duration: Duration::from_millis(0),
+                    duration,
                     error,
                 });
                 continue;
@@ -208,6 +252,23 @@ fn parse_cargo_duration(output: &str) -> Option<Duration> {
             if let Ok(secs) = num_str.parse::<f64>() {
                 return Some(duration_from_secs_safe(secs));
             }
+        }
+    }
+    None
+}
+
+/// Parse per-test execution time from `--report-time` output (nightly).
+/// Format: "test name ... ok <0.123s>" — we look for `<X.XXXs>` at line end.
+fn parse_report_time(line: &str) -> Option<Duration> {
+    let trimmed = line.trim();
+    if let Some(start) = trimmed.rfind('<')
+        && let Some(end) = trimmed.rfind('>')
+        && start < end
+    {
+        let inner = &trimmed[start + 1..end];
+        let num_str = inner.trim_end_matches('s');
+        if let Ok(secs) = num_str.parse::<f64>() {
+            return Some(duration_from_secs_safe(secs));
         }
     }
     None

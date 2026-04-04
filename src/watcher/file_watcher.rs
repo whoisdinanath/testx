@@ -2,13 +2,23 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Duration;
 
+use notify::{RecursiveMode, Watcher};
+
 use crate::config::WatchConfig;
 use crate::watcher::debouncer::Debouncer;
 use crate::watcher::glob::{GlobPattern, should_ignore};
 
+/// Watcher backend: native OS events or polling fallback.
+/// Variants hold the watcher to keep it alive for the duration of `FileWatcher`.
+#[allow(dead_code)]
+enum WatcherBackend {
+    Native(notify::RecommendedWatcher),
+    Poll(notify::PollWatcher),
+}
+
 /// File system watcher that detects changes in a project directory.
 pub struct FileWatcher {
-    /// Receiver for file change events from the watcher thread.
+    /// Receiver for file change events from the watcher backend.
     rx: Receiver<PathBuf>,
     /// Debouncer to coalesce rapid changes.
     debouncer: Debouncer,
@@ -16,12 +26,17 @@ pub struct FileWatcher {
     ignore_patterns: Vec<GlobPattern>,
     /// Root directory being watched.
     root: PathBuf,
-    /// Handle to the watcher thread.
-    _watcher_handle: std::thread::JoinHandle<()>,
+    /// Watcher backend kept alive for the lifetime of `FileWatcher`.
+    _backend: WatcherBackend,
 }
 
 impl FileWatcher {
     /// Create a new file watcher for the given directory.
+    ///
+    /// Uses native OS filesystem events by default (inotify on Linux,
+    /// kqueue on macOS, ReadDirectoryChanges on Windows). Falls back to
+    /// polling when `config.poll_ms` is set — useful for network
+    /// filesystems that don't support native events.
     pub fn new(root: &Path, config: &WatchConfig) -> std::io::Result<Self> {
         let ignore_patterns: Vec<GlobPattern> =
             config.ignore.iter().map(|p| GlobPattern::new(p)).collect();
@@ -29,57 +44,36 @@ impl FileWatcher {
         let debouncer = Debouncer::new(config.debounce_ms);
         let (tx, rx) = mpsc::channel();
 
-        let poll_interval = config
-            .poll_ms
-            .map(Duration::from_millis)
-            .unwrap_or(Duration::from_millis(500));
-
-        let watch_root = root.to_path_buf();
-
-        // Spawn a polling watcher thread
-        let watcher_handle = std::thread::spawn(move || {
-            let mut known_files = collect_files(&watch_root);
-            let mut known_mtimes = get_mtimes(&known_files);
-
-            loop {
-                std::thread::sleep(poll_interval);
-
-                let current_files = collect_files(&watch_root);
-                let current_mtimes = get_mtimes(&current_files);
-
-                // Find new or modified files
-                for (path, mtime) in &current_mtimes {
-                    let changed = match known_mtimes.get(path) {
-                        Some(old_mtime) => mtime != old_mtime,
-                        None => true, // new file
-                    };
-
-                    if changed && tx.send(path.clone()).is_err() {
-                        return; // receiver dropped, stop watching
-                    }
+        // Event handler: extract paths from notify events into the channel.
+        let handler = move |res: Result<notify::Event, notify::Error>| {
+            if let Ok(event) = res {
+                for path in event.paths {
+                    let _ = tx.send(path);
                 }
-
-                // Find deleted files (send parent dir)
-                for path in &known_files {
-                    if !current_files.contains(path)
-                        && let Some(parent) = path.parent()
-                        && tx.send(parent.to_path_buf()).is_err()
-                    {
-                        return;
-                    }
-                }
-
-                known_files = current_files;
-                known_mtimes = current_mtimes;
             }
-        });
+        };
+
+        let backend = if let Some(poll_ms) = config.poll_ms {
+            let poll_config =
+                notify::Config::default().with_poll_interval(Duration::from_millis(poll_ms));
+            let mut w =
+                notify::PollWatcher::new(handler, poll_config).map_err(std::io::Error::other)?;
+            w.watch(root, RecursiveMode::Recursive)
+                .map_err(std::io::Error::other)?;
+            WatcherBackend::Poll(w)
+        } else {
+            let mut w = notify::recommended_watcher(handler).map_err(std::io::Error::other)?;
+            w.watch(root, RecursiveMode::Recursive)
+                .map_err(std::io::Error::other)?;
+            WatcherBackend::Native(w)
+        };
 
         Ok(Self {
             rx,
             debouncer,
             ignore_patterns,
             root: root.to_path_buf(),
-            _watcher_handle: watcher_handle,
+            _backend: backend,
         })
     }
 
@@ -150,115 +144,9 @@ impl FileWatcher {
     }
 }
 
-/// Recursively collect all files in a directory.
-fn collect_files(dir: &Path) -> Vec<PathBuf> {
-    let mut files = Vec::new();
-    collect_files_recursive(dir, &mut files);
-    files
-}
-
-fn collect_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-
-        // Skip hidden directories and common ignores for performance
-        if let Some(name) = path.file_name().and_then(|n| n.to_str())
-            && (name.starts_with('.')
-                || name == "node_modules"
-                || name == "target"
-                || name == "__pycache__"
-                || name == ".testx")
-        {
-            continue;
-        }
-
-        if path.is_dir() {
-            collect_files_recursive(&path, files);
-        } else {
-            files.push(path);
-        }
-    }
-}
-
-/// Get modification times for a list of files.
-fn get_mtimes(files: &[PathBuf]) -> std::collections::HashMap<PathBuf, std::time::SystemTime> {
-    let mut mtimes = std::collections::HashMap::new();
-    for file in files {
-        if let Ok(meta) = std::fs::metadata(file)
-            && let Ok(mtime) = meta.modified()
-        {
-            mtimes.insert(file.clone(), mtime);
-        }
-    }
-    mtimes
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn collect_files_in_temp_dir() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("a.rs"), "fn main() {}").unwrap();
-        std::fs::write(dir.path().join("b.rs"), "fn test() {}").unwrap();
-
-        let files = collect_files(dir.path());
-        assert_eq!(files.len(), 2);
-    }
-
-    #[test]
-    fn collect_files_skips_hidden() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join(".git")).unwrap();
-        std::fs::write(dir.path().join(".git/config"), "cfg").unwrap();
-        std::fs::write(dir.path().join("main.rs"), "main").unwrap();
-
-        let files = collect_files(dir.path());
-        assert_eq!(files.len(), 1);
-        assert!(files[0].file_name().unwrap() == "main.rs");
-    }
-
-    #[test]
-    fn collect_files_recursive_dirs() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join("src")).unwrap();
-        std::fs::write(dir.path().join("src/lib.rs"), "lib").unwrap();
-        std::fs::write(dir.path().join("src/main.rs"), "main").unwrap();
-
-        let files = collect_files(dir.path());
-        assert_eq!(files.len(), 2);
-    }
-
-    #[test]
-    fn collect_files_empty_dir() {
-        let dir = tempfile::tempdir().unwrap();
-        let files = collect_files(dir.path());
-        assert!(files.is_empty());
-    }
-
-    #[test]
-    fn get_mtimes_for_files() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("a.rs"), "a").unwrap();
-        std::fs::write(dir.path().join("b.rs"), "b").unwrap();
-
-        let files = collect_files(dir.path());
-        let mtimes = get_mtimes(&files);
-        assert_eq!(mtimes.len(), 2);
-    }
-
-    #[test]
-    fn get_mtimes_nonexistent_files() {
-        let files = vec![PathBuf::from("/nonexistent/file.rs")];
-        let mtimes = get_mtimes(&files);
-        assert!(mtimes.is_empty());
-    }
 
     #[test]
     fn file_watcher_construction() {
@@ -268,5 +156,35 @@ mod tests {
         assert!(watcher.is_ok());
         let watcher = watcher.unwrap();
         assert_eq!(watcher.root(), dir.path());
+    }
+
+    #[test]
+    fn file_watcher_poll_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = WatchConfig {
+            poll_ms: Some(200),
+            ..WatchConfig::default()
+        };
+        let watcher = FileWatcher::new(dir.path(), &config);
+        assert!(watcher.is_ok());
+    }
+
+    #[test]
+    fn file_watcher_ignore_patterns() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = WatchConfig {
+            ignore: vec!["*.log".to_string(), "target/**".to_string()],
+            ..WatchConfig::default()
+        };
+        let watcher = FileWatcher::new(dir.path(), &config).unwrap();
+        assert!(watcher.should_ignore(&dir.path().join("build.log")));
+        assert!(!watcher.should_ignore(&dir.path().join("main.rs")));
+    }
+
+    #[test]
+    fn file_watcher_nonexistent_dir() {
+        let config = WatchConfig::default();
+        let result = FileWatcher::new(Path::new("/nonexistent/dir"), &config);
+        assert!(result.is_err());
     }
 }

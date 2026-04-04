@@ -7,4 +7,4 @@ pub mod terminal;
 pub use debouncer::Debouncer;
 pub use file_watcher::FileWatcher;
 pub use glob::GlobPattern;
-pub use runner::WatchRunner;
+pub use runner::{WatchRunner, WatchRunnerOptions};

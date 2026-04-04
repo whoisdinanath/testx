@@ -136,6 +136,44 @@ pub struct DetectionResult {
     pub confidence: f32,
 }
 
+/// Builder for computing detection confidence from weighted signals.
+///
+/// Instead of hardcoded confidence values, each adapter accumulates
+/// signals (config files found, test dirs present, runner available, etc.)
+/// that dynamically determine how confident we are in the detection.
+///
+/// # Example
+/// ```ignore
+/// let confidence = ConfidenceScore::base(0.50)
+///     .signal(0.20, project_dir.join("tests").is_dir())
+///     .signal(0.10, project_dir.join("Cargo.lock").exists())
+///     .signal(0.10, which::which("cargo").is_ok())
+///     .finish();
+/// ```
+pub struct ConfidenceScore {
+    score: f32,
+}
+
+impl ConfidenceScore {
+    /// Start with base confidence from the primary project marker being found.
+    pub fn base(score: f32) -> Self {
+        Self { score }
+    }
+
+    /// Add weight when a confirmatory signal is present.
+    pub fn signal(mut self, weight: f32, present: bool) -> Self {
+        if present {
+            self.score += weight;
+        }
+        self
+    }
+
+    /// Return final confidence clamped to `[0.0, 0.99]`.
+    pub fn finish(self) -> f32 {
+        self.score.clamp(0.0, 0.99)
+    }
+}
+
 /// Serialize a Duration as milliseconds (f64) for clean JSON output.
 fn serialize_duration_ms<S>(d: &Duration, s: S) -> Result<S::Ok, S::Error>
 where

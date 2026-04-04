@@ -5,6 +5,7 @@
 panic.txt
 .venv/
 site/
+demo/demo.tape
 
 # Editor / OS
 *.swp

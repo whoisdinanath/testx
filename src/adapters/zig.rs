@@ -6,7 +6,8 @@ use anyhow::Result;
 
 use super::util::duration_from_secs_safe;
 use super::{
-    DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus, TestSuite,
+    ConfidenceScore, DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus,
+    TestSuite,
 };
 
 pub struct ZigAdapter;
@@ -40,10 +41,16 @@ impl TestAdapter for ZigAdapter {
             return None;
         }
 
+        let confidence = ConfidenceScore::base(0.50)
+            .signal(0.15, project_dir.join("build.zig.zon").exists())
+            .signal(0.10, project_dir.join("src").is_dir())
+            .signal(0.15, which::which("zig").is_ok())
+            .finish();
+
         Some(DetectionResult {
             language: "Zig".into(),
             framework: "zig test".into(),
-            confidence: 0.95,
+            confidence,
         })
     }
 
