@@ -9,7 +9,7 @@ homepage = "https://github.com/whoisdinanath/testx"
 readme = "README.md"
 keywords = ["testing", "test-runner", "cli", "developer-tools"]
 categories = ["development-tools::testing", "command-line-utilities"]
-exclude = ["sandbox/", "reps/", ".testx/", "benches/"]
+exclude = ["sandbox/", "reps/", ".testx/"]
 
 [[bin]]
 name = "testx"
