@@ -4,6 +4,8 @@
 </p>
 
 <p align="center">
+  <a href="https://crates.io/crates/testx-cli"><img src="https://img.shields.io/crates/v/testx-cli" alt="crates.io"></a>
+  <a href="https://crates.io/crates/testx-cli"><img src="https://img.shields.io/crates/d/testx-cli" alt="Downloads"></a>
   <a href="https://github.com/whoisdinanath/testx/actions/workflows/ci.yml"><img src="https://github.com/whoisdinanath/testx/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/whoisdinanath/testx/releases/latest"><img src="https://img.shields.io/github/v/release/whoisdinanath/testx?label=release" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License"></a>
@@ -14,18 +16,22 @@
 
 **testx** is a universal test runner that auto-detects your project's language and framework, runs your tests, and displays clean, unified output. Zero configuration required.
 
-```
-testx · Python (pytest)
-────────────────────────────────────────────────────────────
+<p align="center">
+  <img src="demo/demo.gif" alt="testx demo" width="800">
+</p>
 
-  ✓ tests/test_math.py
-    ✓ test_add                                         1ms
-    ✓ test_subtract                                    0ms
-    ✗ test_divide_by_zero                              1ms
+## Why testx?
 
-────────────────────────────────────────────────────────────
-  FAIL  2 passed, 1 failed (3 total) in 120ms
-```
+|                     | Without testx                 | With testx              |
+| ------------------- | ----------------------------- | ----------------------- |
+| **Rust**            | `cargo test`                  | `testx`                 |
+| **Python**          | `uv run pytest -v`            | `testx`                 |
+| **Go**              | `go test -v ./...`            | `testx`                 |
+| **JavaScript**      | `npx vitest run` / `npx jest` | `testx`                 |
+| **Java**            | `mvn test` / `gradle test`    | `testx`                 |
+| **Output**          | Different per language        | Unified, beautiful      |
+| **CI sharding**     | Manual config                 | `--partition slice:1/4` |
+| **Flaky detection** | Custom scripts                | `testx stress`          |
 
 ---
 
@@ -48,21 +54,27 @@ testx · Python (pytest)
 
 ## Supported Languages
 
-| Language | Frameworks | Package Managers |
-|----------|-----------|-----------------|
-| **Rust** | cargo test | — |
-| **Go** | go test | — |
-| **Python** | pytest, unittest, Django | uv, poetry, pdm, venv |
-| **JavaScript / TypeScript** | Jest, Vitest, Mocha, AVA, Bun | npm, pnpm, yarn, bun |
-| **Java / Kotlin** | Maven Surefire, Gradle | mvn, gradle |
-| **C / C++** | Google Test, CTest, Meson | cmake, meson |
-| **Ruby** | RSpec, Minitest | bundler |
-| **Elixir** | ExUnit | mix |
-| **PHP** | PHPUnit | composer |
-| **C# / .NET / F#** | dotnet test | dotnet |
-| **Zig** | zig build test | — |
+| Language                    | Frameworks                    | Package Managers      |
+| --------------------------- | ----------------------------- | --------------------- |
+| **Rust**                    | cargo test                    | —                     |
+| **Go**                      | go test                       | —                     |
+| **Python**                  | pytest, unittest, Django      | uv, poetry, pdm, venv |
+| **JavaScript / TypeScript** | Jest, Vitest, Mocha, AVA, Bun | npm, pnpm, yarn, bun  |
+| **Java / Kotlin**           | Maven Surefire, Gradle        | mvn, gradle           |
+| **C / C++**                 | Google Test, CTest, Meson     | cmake, meson          |
+| **Ruby**                    | RSpec, Minitest               | bundler               |
+| **Elixir**                  | ExUnit                        | mix                   |
+| **PHP**                     | PHPUnit                       | composer              |
+| **C# / .NET / F#**          | dotnet test                   | dotnet                |
+| **Zig**                     | zig build test                | —                     |
 
 ## Installation
+
+### From crates.io
+
+```bash
+cargo install testx-cli
+```
 
 ### From source
 
@@ -269,17 +281,17 @@ cargo fmt --check     # Format check
 
 ## Stats
 
-| Metric | Value |
-|--------|-------|
-| Languages supported | 11 |
-| Test frameworks | 20+ |
-| Source lines | ~29,000 |
-| Test count | 889 (846 unit + 43 integration) |
-| Binary size (release) | 2.9 MB |
-| Framework detection | ~5ms |
-| Rust source files | 53 |
-| Dependencies | minimal (clap, serde, colored, toml, anyhow) |
-| Clippy warnings | 0 |
+| Metric                | Value                                        |
+| --------------------- | -------------------------------------------- |
+| Languages supported   | 11                                           |
+| Test frameworks       | 20+                                          |
+| Source lines          | ~29,000                                      |
+| Test count            | 889 (846 unit + 43 integration)              |
+| Binary size (release) | 2.9 MB                                       |
+| Framework detection   | ~5ms                                         |
+| Rust source files     | 53                                           |
+| Dependencies          | minimal (clap, serde, colored, toml, anyhow) |
+| Clippy warnings       | 0                                            |
 
 ## Contributing
 

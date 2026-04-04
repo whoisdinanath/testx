@@ -5,7 +5,9 @@ use std::time::Duration;
 use anyhow::Result;
 
 use super::util::duration_from_secs_safe;
-use super::{DetectionResult, TestAdapter, TestCase, TestRunResult, TestStatus, TestSuite};
+use super::{
+    ConfidenceScore, DetectionResult, TestAdapter, TestCase, TestRunResult, TestStatus, TestSuite,
+};
 
 /// Build a Command to run a JS tool via the detected package manager.
 /// npx: `npx <tool>`, bun: `bunx <tool>`, yarn/pnpm: `yarn <tool>` / `pnpm <tool>`
@@ -128,10 +130,32 @@ impl TestAdapter for JavaScriptAdapter {
     fn detect(&self, project_dir: &Path) -> Option<DetectionResult> {
         let framework = Self::detect_framework(project_dir)?;
 
+        let has_config = project_dir.join("vitest.config.ts").exists()
+            || project_dir.join("vitest.config.js").exists()
+            || project_dir.join("jest.config.ts").exists()
+            || project_dir.join("jest.config.js").exists()
+            || project_dir.join(".mocharc.yml").exists()
+            || project_dir.join(".mocharc.json").exists();
+        let has_lock = project_dir.join("package-lock.json").exists()
+            || project_dir.join("yarn.lock").exists()
+            || project_dir.join("pnpm-lock.yaml").exists()
+            || project_dir.join("bun.lockb").exists()
+            || project_dir.join("bun.lock").exists();
+        let has_runner = ["npx", "bun", "yarn", "pnpm"]
+            .iter()
+            .any(|r| which::which(r).is_ok());
+
+        let confidence = ConfidenceScore::base(0.50)
+            .signal(0.15, has_config)
+            .signal(0.10, project_dir.join("node_modules").is_dir())
+            .signal(0.10, has_lock)
+            .signal(0.07, has_runner)
+            .finish();
+
         Some(DetectionResult {
             language: "JavaScript".into(),
             framework: framework.into(),
-            confidence: 0.9,
+            confidence,
         })
     }
 

@@ -6,7 +6,8 @@ use anyhow::Result;
 
 use super::util::duration_from_secs_safe;
 use super::{
-    DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus, TestSuite,
+    ConfidenceScore, DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus,
+    TestSuite,
 };
 
 pub struct JavaAdapter;
@@ -67,10 +68,23 @@ impl TestAdapter for JavaAdapter {
             _ => "unknown",
         };
 
+        let has_wrapper =
+            Self::has_gradle_wrapper(project_dir) || project_dir.join(".mvn").is_dir();
+        let has_test_dir = project_dir.join("src/test").is_dir();
+        let has_runner = which::which("gradle").is_ok()
+            || which::which("mvn").is_ok()
+            || Self::has_gradle_wrapper(project_dir);
+
+        let confidence = ConfidenceScore::base(0.50)
+            .signal(0.15, has_wrapper)
+            .signal(0.15, has_test_dir)
+            .signal(0.10, has_runner)
+            .finish();
+
         Some(DetectionResult {
             language: "Java".into(),
             framework: framework.into(),
-            confidence: 0.95,
+            confidence,
         })
     }
 

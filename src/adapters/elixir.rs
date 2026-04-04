@@ -6,7 +6,8 @@ use anyhow::Result;
 
 use super::util::duration_from_secs_safe;
 use super::{
-    DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus, TestSuite,
+    ConfidenceScore, DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus,
+    TestSuite,
 };
 
 pub struct ElixirAdapter;
@@ -40,10 +41,16 @@ impl TestAdapter for ElixirAdapter {
             return None;
         }
 
+        let confidence = ConfidenceScore::base(0.50)
+            .signal(0.20, project_dir.join("test").is_dir())
+            .signal(0.10, project_dir.join("mix.lock").exists())
+            .signal(0.10, which::which("mix").is_ok())
+            .finish();
+
         Some(DetectionResult {
             language: "Elixir".into(),
             framework: "ExUnit".into(),
-            confidence: 0.95,
+            confidence,
         })
     }
 

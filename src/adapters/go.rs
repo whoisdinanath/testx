@@ -5,7 +5,9 @@ use std::time::Duration;
 use anyhow::Result;
 
 use super::util::duration_from_secs_safe;
-use super::{DetectionResult, TestAdapter, TestCase, TestRunResult, TestStatus, TestSuite};
+use super::{
+    ConfidenceScore, DetectionResult, TestAdapter, TestCase, TestRunResult, TestStatus, TestSuite,
+};
 
 pub struct GoAdapter;
 
@@ -50,10 +52,16 @@ impl TestAdapter for GoAdapter {
             return None;
         }
 
+        let confidence = ConfidenceScore::base(0.50)
+            .signal(0.20, true) // test files already confirmed above
+            .signal(0.10, project_dir.join("go.sum").exists())
+            .signal(0.10, which::which("go").is_ok())
+            .finish();
+
         Some(DetectionResult {
             language: "Go".into(),
             framework: "go test".into(),
-            confidence: 0.95,
+            confidence,
         })
     }
 

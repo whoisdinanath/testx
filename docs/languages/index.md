@@ -10,23 +10,25 @@ testx detect
 
 If multiple frameworks are detected (e.g., a project with both Rust and Python), testx picks the one with the highest confidence. Use `--verbose` to see all candidates.
 
+Confidence is computed dynamically from weighted signals — config files, test directories, lock files, and runner availability — rather than a fixed number. More signals present means higher confidence.
+
 ## Languages
 
 ### Rust
 
-|                |              |
-| -------------- | ------------ |
-| **Trigger**    | `Cargo.toml` |
-| **Command**    | `cargo test` |
-| **Confidence** | 0.95         |
+|             |                                                         |
+| ----------- | ------------------------------------------------------- |
+| **Trigger** | `Cargo.toml`                                            |
+| **Command** | `cargo test`                                            |
+| **Signals** | `tests/` dir, `Cargo.lock`, `cargo` on PATH, `src/` dir |
 
 ### Go
 
-|                |                              |
-| -------------- | ---------------------------- |
-| **Trigger**    | `go.mod` + `*_test.go` files |
-| **Command**    | `go test -v ./...`           |
-| **Confidence** | 0.95                         |
+|             |                                          |
+| ----------- | ---------------------------------------- |
+| **Trigger** | `go.mod` + `*_test.go` files             |
+| **Command** | `go test -v ./...`                       |
+| **Signals** | test files found, `go.sum`, `go` on PATH |
 
 ### Python
 
@@ -34,17 +36,17 @@ If multiple frameworks are detected (e.g., a project with both Rust and Python),
 | -------------------- | ---------------------------------------------------------------------------------------- |
 | **Trigger**          | `pytest.ini`, `conftest.py`, `pyproject.toml` with `[tool.pytest]`, or `test_*.py` files |
 | **Command**          | `pytest` (preferred) or `python -m unittest`                                             |
-| **Confidence**       | 0.95 (pytest) / 0.7 (unittest fallback)                                                  |
+| **Signals**          | pytest/django markers, `tests/` dir, lock files, runner on PATH                          |
 | **Package managers** | uv, poetry, pdm, virtualenv (`.venv`, `venv`)                                            |
 
 ### JavaScript / TypeScript
 
-|                      |                                                     |
-| -------------------- | --------------------------------------------------- |
-| **Trigger**          | `vitest.config.*`, `jest.config.*`, `package.json`  |
-| **Command**          | Depends on framework: vitest, jest, bun test, mocha |
-| **Confidence**       | 0.9                                                 |
-| **Package managers** | bun, pnpm, yarn, npm                                |
+|                      |                                                                     |
+| -------------------- | ------------------------------------------------------------------- |
+| **Trigger**          | `vitest.config.*`, `jest.config.*`, `package.json`                  |
+| **Command**          | Depends on framework: vitest, jest, bun test, mocha                 |
+| **Signals**          | framework config files, `node_modules/`, lock files, runner on PATH |
+| **Package managers** | bun, pnpm, yarn, npm                                                |
 
 ### Java / Kotlin
 

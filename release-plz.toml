@@ -1,0 +1,11 @@
+[workspace]
+changelog_config = "cliff.toml"
+publish = true
+git_tag_enable = true
+git_release_enable = true
+git_release_draft = false
+
+[[package]]
+name = "testx-cli"
+changelog_include = ["testx-cli"]
+git_tag_name = "v{{ version }}"

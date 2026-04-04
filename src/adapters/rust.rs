@@ -5,7 +5,9 @@ use std::time::Duration;
 use anyhow::Result;
 
 use super::util::duration_from_secs_safe;
-use super::{DetectionResult, TestAdapter, TestCase, TestRunResult, TestStatus, TestSuite};
+use super::{
+    ConfidenceScore, DetectionResult, TestAdapter, TestCase, TestRunResult, TestStatus, TestSuite,
+};
 
 pub struct RustAdapter;
 
@@ -39,10 +41,17 @@ impl TestAdapter for RustAdapter {
             return None;
         }
 
+        let confidence = ConfidenceScore::base(0.50)
+            .signal(0.20, project_dir.join("tests").is_dir())
+            .signal(0.10, project_dir.join("Cargo.lock").exists())
+            .signal(0.10, which::which("cargo").is_ok())
+            .signal(0.05, project_dir.join("src").is_dir())
+            .finish();
+
         Some(DetectionResult {
             language: "Rust".into(),
             framework: "cargo test".into(),
-            confidence: 0.95,
+            confidence,
         })
     }
 

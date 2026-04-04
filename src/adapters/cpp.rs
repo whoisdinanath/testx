@@ -6,7 +6,8 @@ use anyhow::Result;
 
 use super::util::duration_from_secs_safe;
 use super::{
-    DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus, TestSuite,
+    ConfidenceScore, DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus,
+    TestSuite,
 };
 
 pub struct CppAdapter;
@@ -72,10 +73,20 @@ impl TestAdapter for CppAdapter {
             _ => "unknown",
         };
 
+        let has_build_dir = Self::find_build_dir(project_dir).is_some();
+        let has_test_dir = project_dir.join("test").is_dir() || project_dir.join("tests").is_dir();
+        let has_runner = which::which("ctest").is_ok() || which::which("meson").is_ok();
+
+        let confidence = ConfidenceScore::base(0.50)
+            .signal(0.15, has_build_dir)
+            .signal(0.15, has_test_dir)
+            .signal(0.10, has_runner)
+            .finish();
+
         Some(DetectionResult {
             language: "C/C++".into(),
             framework: framework.into(),
-            confidence: 0.85,
+            confidence,
         })
     }
 
@@ -676,7 +687,7 @@ mod tests {
         let det = adapter.detect(dir.path()).unwrap();
         assert_eq!(det.language, "C/C++");
         assert_eq!(det.framework, "ctest");
-        assert!((det.confidence - 0.85).abs() < 0.01);
+        assert!(det.confidence > 0.4 && det.confidence < 1.0);
     }
 
     #[test]

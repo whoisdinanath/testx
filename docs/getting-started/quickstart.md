@@ -19,7 +19,7 @@ testx detect
 This shows what testx detected without actually running anything:
 
 ```
-Detected: Python (pytest) — confidence 0.95
+Detected: Python (pytest) — confidence 94%
 ```
 
 ## Pass arguments to the test runner

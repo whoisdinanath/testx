@@ -8,6 +8,23 @@ use wait_timeout::ChildExt;
 
 use testx::{config::Config, detection, output};
 
+#[derive(ValueEnum, Clone, Default)]
+enum OutputFormat {
+    #[default]
+    Pretty,
+    Json,
+    Junit,
+    Tap,
+}
+
+#[derive(ValueEnum, Clone)]
+enum ReporterKind {
+    Github,
+    Markdown,
+    Html,
+    Notify,
+}
+
 #[derive(Parser)]
 #[command(
     name = "testx",
@@ -54,6 +71,22 @@ struct Cli {
     /// Use smart caching — skip re-running if nothing changed
     #[arg(long, global = true)]
     cache: bool,
+
+    /// Watch mode — re-run tests on file changes
+    #[arg(short, long, global = true)]
+    watch: bool,
+
+    /// Retry failed tests N times before reporting failure
+    #[arg(long, global = true)]
+    retries: Option<u32>,
+
+    /// Number of parallel jobs (0 = auto-detect CPUs)
+    #[arg(short, long, global = true)]
+    jobs: Option<usize>,
+
+    /// Activate a reporter plugin (github, markdown, html, notify)
+    #[arg(long, global = true)]
+    reporter: Option<ReporterKind>,
 
     /// Extra arguments to pass through to the underlying test runner (after --)
     #[arg(last = true)]
@@ -109,15 +142,25 @@ enum Commands {
     },
     /// Clear the smart test cache
     CacheClear,
+    /// Show test history, trends, and flaky test analytics
+    History {
+        /// What to show: summary, runs, flaky, slow, health
+        #[arg(value_enum, default_value = "summary")]
+        view: HistoryView,
+        /// Number of recent runs to analyze
+        #[arg(short, long, default_value = "20")]
+        last: usize,
+    },
 }
 
 #[derive(ValueEnum, Clone, Default)]
-enum OutputFormat {
+enum HistoryView {
     #[default]
-    Pretty,
-    Json,
-    Junit,
-    Tap,
+    Summary,
+    Runs,
+    Flaky,
+    Slow,
+    Health,
 }
 
 fn main() {
@@ -268,6 +311,71 @@ args = []
                 .map_err(|e| anyhow::anyhow!("{}", e))?;
 
             println!("{} Cleared {} cache entries.", "✓".green().bold(), count);
+            Ok(())
+        }
+
+        Commands::History { view, last } => {
+            use testx::history::TestHistory;
+            use testx::history::analytics::HealthScore;
+            use testx::history::display;
+
+            let history = TestHistory::open(&project_dir).map_err(|e| anyhow::anyhow!("{}", e))?;
+
+            if history.run_count() == 0 {
+                println!(
+                    "{} {} {}",
+                    "testx".bold().cyan(),
+                    "history:".bold(),
+                    "No test runs recorded yet. Run tests first!".dimmed()
+                );
+                return Ok(());
+            }
+
+            println!(
+                "{} {} {} runs recorded",
+                "testx".bold().cyan(),
+                "history".bold(),
+                history.run_count()
+            );
+
+            match view {
+                HistoryView::Summary => {
+                    print!("{}", display::format_stats_summary(&history));
+                    let flaky = history.get_flaky_tests(3, 0.95);
+                    if !flaky.is_empty() {
+                        print!("{}", display::format_flaky_tests(&flaky));
+                    }
+                    let slow = history.get_slowest_trending(last, 3);
+                    if !slow.is_empty() {
+                        print!("{}", display::format_slow_tests(&slow));
+                    }
+                }
+                HistoryView::Runs => {
+                    print!("{}", display::format_recent_runs(&history, last));
+                }
+                HistoryView::Flaky => {
+                    let flaky = history.get_flaky_tests(3, 0.95);
+                    print!("{}", display::format_flaky_tests(&flaky));
+                }
+                HistoryView::Slow => {
+                    let slow = history.get_slowest_trending(last, 3);
+                    print!("{}", display::format_slow_tests(&slow));
+                }
+                HistoryView::Health => {
+                    let score = HealthScore::compute(&history);
+                    println!();
+                    println!(
+                        "  {} Test Health Score: {:.0}/100 ({})",
+                        score.indicator(),
+                        score.score,
+                        score.grade()
+                    );
+                    println!("     Pass Rate:    {:.1}%", score.pass_rate);
+                    println!("     Stability:    {:.1}%", score.stability);
+                    println!("     Performance:  {:.1}%", score.performance);
+                    println!();
+                }
+            }
             Ok(())
         }
 
@@ -468,7 +576,7 @@ args = []
             let config = Config::load(&project_dir);
 
             // Merge args: CLI args take precedence, then config args
-            let mut extra_args: Vec<String> = if !run_args.is_empty() {
+            let extra_args: Vec<String> = if !run_args.is_empty() {
                 run_args
             } else if !cli.args.is_empty() {
                 cli.args
@@ -476,9 +584,37 @@ args = []
                 config.args.clone()
             };
 
-            // If CLI provided args AND config has args, append config args
-            if extra_args.is_empty() {
-                extra_args = config.args.clone();
+            // --- Watch mode (--watch) ---
+            if cli.watch || config.is_watch_enabled() {
+                use testx::runner::RunnerConfig;
+                use testx::watcher::{WatchRunner, WatchRunnerOptions};
+
+                let detected = engine
+                    .detect(&project_dir)
+                    .context("No test framework detected. Try 'testx detect' to diagnose.")?;
+                let adapter = engine.adapter(detected.adapter_index);
+
+                if let Some(missing) = adapter.check_runner() {
+                    anyhow::bail!("Test runner '{}' not found.", missing);
+                }
+
+                let mut runner_config = RunnerConfig::new(project_dir.clone());
+                runner_config.merge_config(&config);
+                runner_config.extra_args = extra_args;
+                runner_config.verbose = cli.verbose;
+
+                let watch_config = config.watch_config();
+                let mut options = WatchRunnerOptions::from_config(&watch_config);
+                options.verbose = cli.verbose;
+
+                let mut watch_runner =
+                    WatchRunner::new(project_dir.clone(), runner_config, options);
+
+                watch_runner
+                    .start(&watch_config)
+                    .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+                return Ok(());
             }
 
             // --- Impact analysis (--affected) ---
@@ -662,6 +798,67 @@ args = []
                 }
             }
 
+            // --- Retry failed tests (--retries) ---
+            let retries = cli.retries.or(config.retries).unwrap_or(0);
+            let mut retries_fixed = 0;
+            if retries > 0 && result.total_failed() > 0 {
+                use testx::retry::{RetryConfig, merge_retry_result};
+
+                let retry_cfg = RetryConfig::new(retries);
+
+                for attempt in 1..=retry_cfg.max_retries {
+                    if result.total_failed() == 0 {
+                        break;
+                    }
+
+                    if matches!(cli.output, OutputFormat::Pretty) {
+                        eprintln!(
+                            "  {} Retry {}/{} — {} failed test(s)...",
+                            "↻".yellow().bold(),
+                            attempt,
+                            retry_cfg.max_retries,
+                            result.total_failed()
+                        );
+                    }
+
+                    // Re-run the same command
+                    let mut retry_cmd = adapter
+                        .build_command(&project_dir, &extra_args)
+                        .context("Failed to build retry command")?;
+                    for (key, value) in &config.env {
+                        retry_cmd.env(key, value);
+                    }
+
+                    let retry_output = retry_cmd
+                        .output()
+                        .context("Failed to execute retry command")?;
+
+                    let retry_stdout = String::from_utf8_lossy(&retry_output.stdout).into_owned();
+                    let retry_stderr = String::from_utf8_lossy(&retry_output.stderr).into_owned();
+                    let retry_exit = retry_output.status.code().unwrap_or(1);
+
+                    let retry_result =
+                        adapter.parse_output(&retry_stdout, &retry_stderr, retry_exit);
+
+                    let before_failed = result.total_failed();
+                    result = merge_retry_result(&result, &retry_result);
+                    let after_failed = result.total_failed();
+                    retries_fixed += before_failed.saturating_sub(after_failed);
+
+                    if retry_cfg.stop_on_pass && result.total_failed() == 0 {
+                        break;
+                    }
+                }
+
+                if retries_fixed > 0 && matches!(cli.output, OutputFormat::Pretty) {
+                    println!(
+                        "  {} {} test(s) fixed by retries",
+                        "✓".green().bold(),
+                        retries_fixed
+                    );
+                }
+            }
+
             // --- Cache the result (--cache) ---
             if cli.cache {
                 use testx::cache;
@@ -676,6 +873,63 @@ args = []
                         &extra_args,
                         &cache_config,
                     );
+                }
+            }
+
+            // --- Record history ---
+            {
+                use testx::history::TestHistory;
+
+                if let Ok(mut history) = TestHistory::open(&project_dir) {
+                    let _ = history.record(&result);
+                }
+            }
+
+            // --- Reporter plugins (--reporter) ---
+            if let Some(ref reporter) = cli.reporter {
+                use testx::plugin::Plugin;
+
+                match reporter {
+                    ReporterKind::Github => {
+                        use testx::plugin::reporters::github::{GithubConfig, GithubReporter};
+
+                        let mut r = GithubReporter::new(GithubConfig::default());
+                        let _ = r.on_result(&result);
+                        for line in r.output() {
+                            println!("{}", line);
+                        }
+                    }
+                    ReporterKind::Markdown => {
+                        use testx::plugin::reporters::markdown::{
+                            MarkdownConfig, MarkdownReporter,
+                        };
+
+                        let mut r = MarkdownReporter::new(MarkdownConfig::default());
+                        let _ = r.on_result(&result);
+                        println!("{}", r.output());
+                    }
+                    ReporterKind::Html => {
+                        use testx::plugin::reporters::html::{HtmlConfig, HtmlReporter};
+
+                        let mut r = HtmlReporter::new(HtmlConfig::default());
+                        let _ = r.on_result(&result);
+                        let report_path = project_dir.join("testx-report.html");
+                        if let Err(e) = std::fs::write(&report_path, r.output()) {
+                            eprintln!("{} Failed to write HTML report: {}", "⚠".yellow(), e);
+                        } else {
+                            println!(
+                                "  {} HTML report: {}",
+                                "✓".green().bold(),
+                                report_path.display()
+                            );
+                        }
+                    }
+                    ReporterKind::Notify => {
+                        use testx::plugin::reporters::notify::{NotifyConfig, NotifyReporter};
+
+                        let mut r = NotifyReporter::new(NotifyConfig::default());
+                        let _ = r.on_result(&result);
+                    }
                 }
             }
 
