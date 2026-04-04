@@ -6,7 +6,8 @@ use anyhow::Result;
 
 use super::util::duration_from_secs_safe;
 use super::{
-    DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus, TestSuite,
+    ConfidenceScore, DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus,
+    TestSuite,
 };
 
 pub struct RubyAdapter;
@@ -88,10 +89,21 @@ impl TestAdapter for RubyAdapter {
     fn detect(&self, project_dir: &Path) -> Option<DetectionResult> {
         let framework = Self::detect_framework(project_dir)?;
 
+        let has_spec_or_test =
+            project_dir.join("spec").is_dir() || project_dir.join("test").is_dir();
+        let has_lock = project_dir.join("Gemfile.lock").exists();
+        let has_runner = which::which("ruby").is_ok();
+
+        let confidence = ConfidenceScore::base(0.50)
+            .signal(0.15, has_spec_or_test)
+            .signal(0.15, has_lock)
+            .signal(0.10, has_runner)
+            .finish();
+
         Some(DetectionResult {
             language: "Ruby".into(),
             framework: framework.into(),
-            confidence: 0.9,
+            confidence,
         })
     }
 

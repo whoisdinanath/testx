@@ -8,6 +8,23 @@ use wait_timeout::ChildExt;
 
 use testx::{config::Config, detection, output};
 
+#[derive(ValueEnum, Clone, Default)]
+enum OutputFormat {
+    #[default]
+    Pretty,
+    Json,
+    Junit,
+    Tap,
+}
+
+#[derive(ValueEnum, Clone)]
+enum ReporterKind {
+    Github,
+    Markdown,
+    Html,
+    Notify,
+}
+
 #[derive(Parser)]
 #[command(
     name = "testx",
@@ -55,6 +72,22 @@ struct Cli {
     #[arg(long, global = true)]
     cache: bool,
 
+    /// Watch mode — re-run tests on file changes
+    #[arg(short, long, global = true)]
+    watch: bool,
+
+    /// Retry failed tests N times before reporting failure
+    #[arg(long, global = true)]
+    retries: Option<u32>,
+
+    /// Number of parallel jobs (0 = auto-detect CPUs)
+    #[arg(short, long, global = true)]
+    jobs: Option<usize>,
+
+    /// Activate a reporter plugin (github, markdown, html, notify)
+    #[arg(long, global = true)]
+    reporter: Option<ReporterKind>,
+
     /// Extra arguments to pass through to the underlying test runner (after --)
     #[arg(last = true)]
     args: Vec<String>,
@@ -64,6 +97,18 @@ struct Cli {
 enum Commands {
     /// Run tests (default)
     Run {
+        /// Filter tests by name pattern (supports glob: *foo*, test_*)
+        #[arg(short, long)]
+        filter: Option<String>,
+        /// Exclude tests matching pattern
+        #[arg(long)]
+        exclude: Option<String>,
+        /// Stop on first failure
+        #[arg(long)]
+        fail_fast: bool,
+        /// Enable code coverage collection
+        #[arg(long)]
+        coverage: bool,
         /// Extra arguments to pass through to the underlying test runner
         #[arg(last = true)]
         args: Vec<String>,
@@ -91,6 +136,12 @@ enum Commands {
         /// Maximum total duration in seconds
         #[arg(long)]
         max_duration: Option<u64>,
+        /// Minimum pass rate threshold (0.0–1.0). Exit 1 if any flaky test is below this.
+        #[arg(long)]
+        threshold: Option<f64>,
+        /// Number of parallel stress workers (0 = sequential, default)
+        #[arg(long, default_value = "0")]
+        parallel_stress: usize,
         /// Extra arguments to pass through to the underlying test runner
         #[arg(last = true)]
         args: Vec<String>,
@@ -107,17 +158,51 @@ enum Commands {
         #[arg(last = true)]
         args: Vec<String>,
     },
+    /// Scan a workspace/monorepo and run tests across all detected projects
+    Workspace {
+        /// Maximum directory depth to scan (0 = unlimited)
+        #[arg(long, default_value = "5")]
+        max_depth: usize,
+        /// Maximum parallel jobs (0 = auto-detect CPUs)
+        #[arg(short, long, default_value = "0")]
+        jobs: Option<usize>,
+        /// Run projects sequentially instead of in parallel
+        #[arg(long)]
+        sequential: bool,
+        /// Stop on first project failure
+        #[arg(long)]
+        fail_fast: bool,
+        /// Filter to specific languages (comma-separated, e.g., "rust,python")
+        #[arg(long)]
+        filter: Option<String>,
+        /// Only list discovered projects, don't run tests
+        #[arg(long)]
+        list: bool,
+        /// Extra arguments to pass through to the underlying test runners
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
     /// Clear the smart test cache
     CacheClear,
+    /// Show test history, trends, and flaky test analytics
+    History {
+        /// What to show: summary, runs, flaky, slow, health
+        #[arg(value_enum, default_value = "summary")]
+        view: HistoryView,
+        /// Number of recent runs to analyze
+        #[arg(short, long, default_value = "20")]
+        last: usize,
+    },
 }
 
 #[derive(ValueEnum, Clone, Default)]
-enum OutputFormat {
+enum HistoryView {
     #[default]
-    Pretty,
-    Json,
-    Junit,
-    Tap,
+    Summary,
+    Runs,
+    Flaky,
+    Slow,
+    Health,
 }
 
 fn main() {
@@ -147,7 +232,13 @@ fn run(cli: Cli) -> Result<()> {
 
     let engine = detection::DetectionEngine::new();
 
-    match cli.command.unwrap_or(Commands::Run { args: vec![] }) {
+    match cli.command.unwrap_or(Commands::Run {
+        args: vec![],
+        filter: None,
+        exclude: None,
+        fail_fast: false,
+        coverage: false,
+    }) {
         Commands::Completions { shell } => {
             testx::completions::generate_completions(shell, &mut Cli::command());
             Ok(())
@@ -257,6 +348,120 @@ args = []
             Ok(())
         }
 
+        Commands::Workspace {
+            max_depth,
+            jobs,
+            sequential,
+            fail_fast,
+            filter,
+            list,
+            args: ws_args,
+        } => {
+            use testx::workspace::{self, WorkspaceConfig};
+
+            let config = Config::load(&project_dir);
+
+            let extra_args = if !ws_args.is_empty() {
+                ws_args
+            } else if !cli.args.is_empty() {
+                cli.args
+            } else {
+                config.args.clone()
+            };
+
+            let filter_languages: Vec<String> = filter
+                .map(|f| f.split(',').map(|s| s.trim().to_string()).collect())
+                .unwrap_or_default();
+
+            let ws_config = WorkspaceConfig {
+                max_depth,
+                parallel: !sequential,
+                max_jobs: jobs.unwrap_or(0),
+                fail_fast,
+                filter_languages,
+                skip_dirs: Vec::new(),
+            };
+
+            println!(
+                "{} {} scanning workspace at {}",
+                "testx".bold().cyan(),
+                "▸".bold(),
+                project_dir.display()
+            );
+            println!();
+
+            let projects = workspace::discover_projects(&project_dir, &engine, &ws_config);
+
+            if projects.is_empty() {
+                println!("  {} No testable projects found.", "⚠".yellow());
+                println!();
+                return Ok(());
+            }
+
+            if list {
+                println!(
+                    "  {} Discovered {} project(s):",
+                    "✓".green(),
+                    projects.len()
+                );
+                println!();
+                for p in &projects {
+                    let rel = p.path.strip_prefix(&project_dir).unwrap_or(&p.path);
+                    println!(
+                        "  {} {} ({}, {}, {:.0}% confidence)",
+                        "▸".dimmed(),
+                        rel.display(),
+                        p.language,
+                        p.framework,
+                        p.confidence * 100.0,
+                    );
+                }
+                println!();
+                return Ok(());
+            }
+
+            println!(
+                "  Running tests in {} project(s){}...",
+                projects.len(),
+                if ws_config.parallel {
+                    format!(" ({} jobs)", ws_config.effective_jobs())
+                } else {
+                    " (sequential)".to_string()
+                }
+            );
+            println!();
+
+            let env_vars: Vec<(String, String)> = config
+                .env
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+
+            let report = workspace::run_workspace(
+                &projects,
+                &engine,
+                &extra_args,
+                &ws_config,
+                &env_vars,
+                cli.verbose,
+            );
+
+            match cli.output {
+                OutputFormat::Json => {
+                    let json = workspace::workspace_report_json(&report);
+                    println!("{}", serde_json::to_string_pretty(&json).unwrap());
+                }
+                _ => {
+                    println!("{}", workspace::format_workspace_report(&report));
+                }
+            }
+
+            if report.projects_failed > 0 {
+                process::exit(1);
+            }
+            Ok(())
+        }
+
         Commands::CacheClear => {
             use testx::cache::CacheStore;
 
@@ -271,13 +476,82 @@ args = []
             Ok(())
         }
 
+        Commands::History { view, last } => {
+            use testx::history::TestHistory;
+            use testx::history::analytics::HealthScore;
+            use testx::history::display;
+
+            let history = TestHistory::open(&project_dir).map_err(|e| anyhow::anyhow!("{}", e))?;
+
+            if history.run_count() == 0 {
+                println!(
+                    "{} {} {}",
+                    "testx".bold().cyan(),
+                    "history:".bold(),
+                    "No test runs recorded yet. Run tests first!".dimmed()
+                );
+                return Ok(());
+            }
+
+            println!(
+                "{} {} {} runs recorded",
+                "testx".bold().cyan(),
+                "history".bold(),
+                history.run_count()
+            );
+
+            match view {
+                HistoryView::Summary => {
+                    print!("{}", display::format_stats_summary(&history));
+                    let flaky = history.get_flaky_tests(3, 0.95);
+                    if !flaky.is_empty() {
+                        print!("{}", display::format_flaky_tests(&flaky));
+                    }
+                    let slow = history.get_slowest_trending(last, 3);
+                    if !slow.is_empty() {
+                        print!("{}", display::format_slow_tests(&slow));
+                    }
+                }
+                HistoryView::Runs => {
+                    print!("{}", display::format_recent_runs(&history, last));
+                }
+                HistoryView::Flaky => {
+                    let flaky = history.get_flaky_tests(3, 0.95);
+                    print!("{}", display::format_flaky_tests(&flaky));
+                }
+                HistoryView::Slow => {
+                    let slow = history.get_slowest_trending(last, 3);
+                    print!("{}", display::format_slow_tests(&slow));
+                }
+                HistoryView::Health => {
+                    let score = HealthScore::compute(&history);
+                    println!();
+                    println!(
+                        "  {} Test Health Score: {:.0}/100 ({})",
+                        score.indicator(),
+                        score.score,
+                        score.grade()
+                    );
+                    println!("     Pass Rate:    {:.1}%", score.pass_rate);
+                    println!("     Stability:    {:.1}%", score.stability);
+                    println!("     Performance:  {:.1}%", score.performance);
+                    println!();
+                }
+            }
+            Ok(())
+        }
+
         Commands::Stress {
             count,
             fail_fast,
             max_duration,
+            threshold,
+            parallel_stress,
             args: stress_args,
         } => {
-            use testx::stress::{StressAccumulator, StressConfig, format_stress_report};
+            use testx::stress::{
+                StressAccumulator, StressConfig, format_stress_report, stress_report_json,
+            };
 
             let config = Config::load(&project_dir);
 
@@ -298,9 +572,14 @@ args = []
                 anyhow::bail!("Test runner '{}' not found.", missing);
             }
 
-            let mut stress_cfg = StressConfig::new(count).with_fail_fast(fail_fast);
+            let mut stress_cfg = StressConfig::new(count)
+                .with_fail_fast(fail_fast)
+                .with_parallel_workers(parallel_stress);
             if let Some(secs) = max_duration {
                 stress_cfg = stress_cfg.with_max_duration(std::time::Duration::from_secs(secs));
+            }
+            if let Some(t) = threshold {
+                stress_cfg = stress_cfg.with_threshold(t);
             }
 
             println!(
@@ -367,8 +646,19 @@ args = []
 
             let report = acc.report();
             println!();
-            println!("{}", format_stress_report(&report));
 
+            if matches!(cli.output, OutputFormat::Json) {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&stress_report_json(&report)).unwrap()
+                );
+            } else {
+                println!("{}", format_stress_report(&report));
+            }
+
+            if report.threshold_passed == Some(false) {
+                process::exit(1);
+            }
             if !report.all_passed {
                 process::exit(1);
             }
@@ -463,12 +753,18 @@ args = []
             Ok(())
         }
 
-        Commands::Run { args: run_args } => {
+        Commands::Run {
+            args: run_args,
+            filter,
+            exclude,
+            fail_fast,
+            coverage,
+        } => {
             // Load config file
             let config = Config::load(&project_dir);
 
             // Merge args: CLI args take precedence, then config args
-            let mut extra_args: Vec<String> = if !run_args.is_empty() {
+            let extra_args: Vec<String> = if !run_args.is_empty() {
                 run_args
             } else if !cli.args.is_empty() {
                 cli.args
@@ -476,9 +772,69 @@ args = []
                 config.args.clone()
             };
 
-            // If CLI provided args AND config has args, append config args
-            if extra_args.is_empty() {
-                extra_args = config.args.clone();
+            // Resolve config-merged values (CLI takes precedence)
+            let verbose = cli.verbose || config.output_config().verbose.unwrap_or(false);
+            let slowest = cli.slowest.or(config.output_config().slowest);
+            let timeout_secs = cli.timeout.or(config.timeout);
+            let retries = cli.retries.or(config.retries).unwrap_or(0);
+            let fail_fast = fail_fast || config.fail_fast.unwrap_or(false);
+
+            // Resolve adapter override from config
+            let adapter_override = config.adapter.clone();
+
+            // Resolve filter: CLI --filter > config filter.include
+            let filter_include = filter.or_else(|| {
+                config
+                    .filter_config()
+                    .include
+                    .as_ref()
+                    .map(|s| s.to_string())
+            });
+            let filter_exclude = exclude.or_else(|| {
+                config
+                    .filter_config()
+                    .exclude
+                    .as_ref()
+                    .map(|s| s.to_string())
+            });
+
+            // Resolve coverage: CLI --coverage > config coverage.enabled
+            let coverage_enabled = coverage || config.coverage_config().enabled;
+
+            // Resolve history: config history.enabled (default true)
+            let history_enabled = config.history.as_ref().map(|h| h.enabled).unwrap_or(true);
+
+            // --- Watch mode (--watch) ---
+            if cli.watch || config.is_watch_enabled() {
+                use testx::runner::RunnerConfig;
+                use testx::watcher::{WatchRunner, WatchRunnerOptions};
+
+                let detected = engine
+                    .detect(&project_dir)
+                    .context("No test framework detected. Try 'testx detect' to diagnose.")?;
+                let adapter = engine.adapter(detected.adapter_index);
+
+                if let Some(missing) = adapter.check_runner() {
+                    anyhow::bail!("Test runner '{}' not found.", missing);
+                }
+
+                let mut runner_config = RunnerConfig::new(project_dir.clone());
+                runner_config.merge_config(&config);
+                runner_config.extra_args = extra_args;
+                runner_config.verbose = verbose;
+
+                let watch_config = config.watch_config();
+                let mut options = WatchRunnerOptions::from_config(&watch_config);
+                options.verbose = verbose;
+
+                let mut watch_runner =
+                    WatchRunner::new(project_dir.clone(), runner_config, options);
+
+                watch_runner
+                    .start(&watch_config)
+                    .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+                return Ok(());
             }
 
             // --- Impact analysis (--affected) ---
@@ -540,7 +896,7 @@ args = []
                                 cache::format_cache_hit(&cached)
                             );
                             return Ok(());
-                        } else if cli.verbose {
+                        } else if verbose {
                             eprintln!(
                                 "{} Previous run failed — re-running tests.",
                                 "cache:".dimmed()
@@ -550,10 +906,43 @@ args = []
                 }
             }
 
-            let detected = engine.detect(&project_dir)
-                .context("No test framework detected. Try 'testx detect' to diagnose, or 'testx list' for supported frameworks.")?;
+            let detected = if let Some(ref override_name) = adapter_override {
+                // Find adapter by name override from config
+                let idx = engine
+                    .adapters()
+                    .iter()
+                    .position(|a| a.name().to_lowercase() == override_name.to_lowercase())
+                    .with_context(|| {
+                        format!("Unknown adapter '{}' in testx.toml", override_name)
+                    })?;
+                let det = engine.adapter(idx).detect(&project_dir).with_context(|| {
+                    format!(
+                        "Adapter '{}' does not detect a project at {}",
+                        override_name,
+                        project_dir.display()
+                    )
+                })?;
+                testx::detection::DetectedProject {
+                    adapter_index: idx,
+                    detection: det,
+                }
+            } else {
+                engine.detect(&project_dir).context(
+                    "No test framework detected. Try 'testx detect' to diagnose, or 'testx list' for supported frameworks.",
+                )?
+            };
 
             let adapter = engine.adapter(detected.adapter_index);
+
+            // Set up event bus for lifecycle events
+            let mut event_bus = testx::events::EventBus::new();
+
+            // Fire RunStarted event
+            event_bus.emit(testx::events::TestEvent::RunStarted {
+                adapter: adapter.name().to_string(),
+                framework: detected.detection.framework.clone(),
+                project_dir: project_dir.clone(),
+            });
 
             if matches!(cli.output, OutputFormat::Pretty) {
                 output::print_header(adapter.name(), &detected);
@@ -571,17 +960,40 @@ args = []
                 .build_command(&project_dir, &extra_args)
                 .context("Failed to build test command")?;
 
+            // --- Coverage: inject coverage arguments (--coverage) ---
+            if coverage_enabled {
+                let adapter_lower = adapter.name().to_lowercase();
+                if let Some(cov_config) = testx::coverage::default_coverage_tool(&adapter_lower) {
+                    for arg in &cov_config.extra_args {
+                        cmd.arg(arg);
+                    }
+                    for (key, value) in &cov_config.env {
+                        cmd.env(key, value);
+                    }
+                    if matches!(cli.output, OutputFormat::Pretty) {
+                        println!(
+                            "  {} Coverage enabled via {}",
+                            "▸".dimmed(),
+                            cov_config.tool
+                        );
+                    }
+                } else if matches!(cli.output, OutputFormat::Pretty) {
+                    eprintln!(
+                        "  {} Coverage not supported for {}",
+                        "⚠".yellow(),
+                        adapter.name()
+                    );
+                }
+            }
+
             // Set environment variables from config
             for (key, value) in &config.env {
                 cmd.env(key, value);
             }
 
-            if cli.verbose {
+            if verbose {
                 eprintln!("{} {:?}", "cmd:".dimmed(), cmd);
             }
-
-            // Resolve timeout: CLI flag > config > none
-            let timeout_secs = cli.timeout.or(config.timeout);
 
             let start = std::time::Instant::now();
 
@@ -641,6 +1053,12 @@ args = []
                 result.duration = elapsed;
             }
 
+            // Fire RunFinished event
+            event_bus.emit(testx::events::TestEvent::RunFinished {
+                result: result.clone(),
+            });
+            event_bus.flush();
+
             // --- Apply CI sharding (--partition) ---
             if let Some(ref partition_str) = cli.partition {
                 use testx::sharding::ShardingMode;
@@ -662,6 +1080,101 @@ args = []
                 }
             }
 
+            // --- Apply test filter (--filter / config filter) ---
+            if filter_include.is_some() || filter_exclude.is_some() {
+                use testx::filter::TestFilter;
+
+                let mut test_filter = TestFilter::new();
+                if let Some(ref pattern) = filter_include {
+                    test_filter = test_filter.include_csv(pattern);
+                }
+                if let Some(ref pattern) = filter_exclude {
+                    test_filter = test_filter.exclude_csv(pattern);
+                }
+
+                if test_filter.is_active() {
+                    let original_count = result.total_tests();
+                    result = test_filter.apply(&result);
+
+                    event_bus.emit(testx::events::TestEvent::FilterApplied {
+                        pattern: filter_include
+                            .clone()
+                            .or(filter_exclude.clone())
+                            .unwrap_or_default(),
+                        matched_count: result.total_tests(),
+                    });
+
+                    if matches!(cli.output, OutputFormat::Pretty) {
+                        println!(
+                            "  {} Filter: {} of {} tests",
+                            "▸".dimmed(),
+                            result.total_tests(),
+                            original_count
+                        );
+                    }
+                }
+            }
+
+            // --- Retry failed tests (--retries) ---
+            let mut retries_fixed = 0;
+            if retries > 0 && result.total_failed() > 0 && !fail_fast {
+                use testx::retry::{RetryConfig, merge_retry_result};
+
+                let retry_cfg = RetryConfig::new(retries);
+
+                for attempt in 1..=retry_cfg.max_retries {
+                    if result.total_failed() == 0 {
+                        break;
+                    }
+
+                    if matches!(cli.output, OutputFormat::Pretty) {
+                        eprintln!(
+                            "  {} Retry {}/{} — {} failed test(s)...",
+                            "↻".yellow().bold(),
+                            attempt,
+                            retry_cfg.max_retries,
+                            result.total_failed()
+                        );
+                    }
+
+                    // Re-run the same command
+                    let mut retry_cmd = adapter
+                        .build_command(&project_dir, &extra_args)
+                        .context("Failed to build retry command")?;
+                    for (key, value) in &config.env {
+                        retry_cmd.env(key, value);
+                    }
+
+                    let retry_output = retry_cmd
+                        .output()
+                        .context("Failed to execute retry command")?;
+
+                    let retry_stdout = String::from_utf8_lossy(&retry_output.stdout).into_owned();
+                    let retry_stderr = String::from_utf8_lossy(&retry_output.stderr).into_owned();
+                    let retry_exit = retry_output.status.code().unwrap_or(1);
+
+                    let retry_result =
+                        adapter.parse_output(&retry_stdout, &retry_stderr, retry_exit);
+
+                    let before_failed = result.total_failed();
+                    result = merge_retry_result(&result, &retry_result);
+                    let after_failed = result.total_failed();
+                    retries_fixed += before_failed.saturating_sub(after_failed);
+
+                    if retry_cfg.stop_on_pass && result.total_failed() == 0 {
+                        break;
+                    }
+                }
+
+                if retries_fixed > 0 && matches!(cli.output, OutputFormat::Pretty) {
+                    println!(
+                        "  {} {} test(s) fixed by retries",
+                        "✓".green().bold(),
+                        retries_fixed
+                    );
+                }
+            }
+
             // --- Cache the result (--cache) ---
             if cli.cache {
                 use testx::cache;
@@ -679,11 +1192,68 @@ args = []
                 }
             }
 
+            // --- Record history ---
+            if history_enabled {
+                use testx::history::TestHistory;
+
+                if let Ok(mut history) = TestHistory::open(&project_dir) {
+                    let _ = history.record(&result);
+                }
+            }
+
+            // --- Reporter plugins (--reporter) ---
+            if let Some(ref reporter) = cli.reporter {
+                use testx::plugin::Plugin;
+
+                match reporter {
+                    ReporterKind::Github => {
+                        use testx::plugin::reporters::github::{GithubConfig, GithubReporter};
+
+                        let mut r = GithubReporter::new(GithubConfig::default());
+                        let _ = r.on_result(&result);
+                        for line in r.output() {
+                            println!("{}", line);
+                        }
+                    }
+                    ReporterKind::Markdown => {
+                        use testx::plugin::reporters::markdown::{
+                            MarkdownConfig, MarkdownReporter,
+                        };
+
+                        let mut r = MarkdownReporter::new(MarkdownConfig::default());
+                        let _ = r.on_result(&result);
+                        println!("{}", r.output());
+                    }
+                    ReporterKind::Html => {
+                        use testx::plugin::reporters::html::{HtmlConfig, HtmlReporter};
+
+                        let mut r = HtmlReporter::new(HtmlConfig::default());
+                        let _ = r.on_result(&result);
+                        let report_path = project_dir.join("testx-report.html");
+                        if let Err(e) = std::fs::write(&report_path, r.output()) {
+                            eprintln!("{} Failed to write HTML report: {}", "⚠".yellow(), e);
+                        } else {
+                            println!(
+                                "  {} HTML report: {}",
+                                "✓".green().bold(),
+                                report_path.display()
+                            );
+                        }
+                    }
+                    ReporterKind::Notify => {
+                        use testx::plugin::reporters::notify::{NotifyConfig, NotifyReporter};
+
+                        let mut r = NotifyReporter::new(NotifyConfig::default());
+                        let _ = r.on_result(&result);
+                    }
+                }
+            }
+
             match cli.output {
                 OutputFormat::Pretty => {
                     output::print_results(&result);
 
-                    if let Some(n) = cli.slowest {
+                    if let Some(n) = slowest {
                         output::print_slowest_tests(&result, n);
                     }
 

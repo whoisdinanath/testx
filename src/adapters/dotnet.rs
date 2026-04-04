@@ -6,7 +6,8 @@ use anyhow::Result;
 
 use super::util::duration_from_secs_safe;
 use super::{
-    DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus, TestSuite,
+    ConfidenceScore, DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus,
+    TestSuite,
 };
 
 pub struct DotnetAdapter;
@@ -69,10 +70,28 @@ impl TestAdapter for DotnetAdapter {
 
         let lang = Self::detect_project_type(project_dir);
 
+        let has_sln = std::fs::read_dir(project_dir)
+            .ok()
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .any(|e| e.file_name().to_string_lossy().ends_with(".sln"))
+            })
+            .unwrap_or(false);
+
+        let confidence = ConfidenceScore::base(0.50)
+            .signal(0.15, has_sln)
+            .signal(
+                0.10,
+                project_dir.join("obj").is_dir() || project_dir.join("bin").is_dir(),
+            )
+            .signal(0.15, which::which("dotnet").is_ok())
+            .finish();
+
         Some(DetectionResult {
             language: lang.into(),
             framework: "dotnet test".into(),
-            confidence: 0.95,
+            confidence,
         })
     }
 

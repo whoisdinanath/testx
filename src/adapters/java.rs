@@ -6,7 +6,8 @@ use anyhow::Result;
 
 use super::util::duration_from_secs_safe;
 use super::{
-    DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus, TestSuite,
+    ConfidenceScore, DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus,
+    TestSuite,
 };
 
 pub struct JavaAdapter;
@@ -48,8 +49,19 @@ impl TestAdapter for JavaAdapter {
     }
 
     fn check_runner(&self) -> Option<String> {
-        // Will check in build_command based on build tool
-        None
+        // check_runner() has no access to project_dir, so we can't check for
+        // ./gradlew. We check for system-installed tools; build_command will
+        // fall back to ./gradlew if it exists. Only report missing if neither
+        // system gradle nor mvn nor ant are available.
+        if which::which("gradle").is_ok()
+            || which::which("mvn").is_ok()
+            || which::which("ant").is_ok()
+        {
+            return None;
+        }
+        // Note: this may false-positive if the project has a ./gradlew wrapper.
+        // build_command handles that case. We still warn so users know early.
+        Some("gradle, mvn, or ant (or add a ./gradlew wrapper)".into())
     }
 
     fn detect(&self, project_dir: &Path) -> Option<DetectionResult> {
@@ -67,10 +79,23 @@ impl TestAdapter for JavaAdapter {
             _ => "unknown",
         };
 
+        let has_wrapper =
+            Self::has_gradle_wrapper(project_dir) || project_dir.join(".mvn").is_dir();
+        let has_test_dir = project_dir.join("src/test").is_dir();
+        let has_runner = which::which("gradle").is_ok()
+            || which::which("mvn").is_ok()
+            || Self::has_gradle_wrapper(project_dir);
+
+        let confidence = ConfidenceScore::base(0.50)
+            .signal(0.15, has_wrapper)
+            .signal(0.15, has_test_dir)
+            .signal(0.10, has_runner)
+            .finish();
+
         Some(DetectionResult {
             language: "Java".into(),
             framework: framework.into(),
-            confidence: 0.95,
+            confidence,
         })
     }
 

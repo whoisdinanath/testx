@@ -18,3 +18,4 @@ pub mod runner;
 pub mod sharding;
 pub mod stress;
 pub mod watcher;
+pub mod workspace;

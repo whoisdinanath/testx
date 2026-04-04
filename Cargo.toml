@@ -1,5 +1,5 @@
 [package]
-name = "testx"
+name = "testx-cli"
 version = "0.1.0"
 edition = "2024"
 description = "One command. Any language. Beautiful tests."
@@ -9,7 +9,15 @@ homepage = "https://github.com/whoisdinanath/testx"
 readme = "README.md"
 keywords = ["testing", "test-runner", "cli", "developer-tools"]
 categories = ["development-tools::testing", "command-line-utilities"]
-exclude = ["sandbox/", "reps/", ".testx/", "benches/"]
+exclude = ["sandbox/", "reps/", ".testx/"]
+
+[[bin]]
+name = "testx"
+path = "src/main.rs"
+
+[lib]
+name = "testx"
+path = "src/lib.rs"
 
 [dependencies]
 anyhow = "1.0.102"
@@ -21,6 +29,7 @@ serde_json = "1.0.149"
 which = "8.0.2"
 toml = "0.8"
 wait-timeout = "0.2"
+notify = { version = "7", default-features = false, features = ["macos_kqueue"] }
 
 [dev-dependencies]
 assert_cmd = "2.0"

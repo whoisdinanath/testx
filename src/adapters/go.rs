@@ -5,7 +5,9 @@ use std::time::Duration;
 use anyhow::Result;
 
 use super::util::duration_from_secs_safe;
-use super::{DetectionResult, TestAdapter, TestCase, TestRunResult, TestStatus, TestSuite};
+use super::{
+    ConfidenceScore, DetectionResult, TestAdapter, TestCase, TestRunResult, TestStatus, TestSuite,
+};
 
 pub struct GoAdapter;
 
@@ -50,10 +52,16 @@ impl TestAdapter for GoAdapter {
             return None;
         }
 
+        let confidence = ConfidenceScore::base(0.50)
+            .signal(0.20, true) // test files already confirmed above
+            .signal(0.10, project_dir.join("go.sum").exists())
+            .signal(0.10, which::which("go").is_ok())
+            .finish();
+
         Some(DetectionResult {
             language: "Go".into(),
             framework: "go test".into(),
-            confidence: 0.95,
+            confidence,
         })
     }
 
@@ -197,7 +205,17 @@ impl TestAdapter for GoAdapter {
     }
 }
 
+/// Maximum recursion depth for Go test file discovery.
+const MAX_GO_SCAN_DEPTH: usize = 20;
+
 fn find_test_files_recursive(dir: &Path) -> bool {
+    find_test_files_recursive_inner(dir, 0)
+}
+
+fn find_test_files_recursive_inner(dir: &Path, depth: usize) -> bool {
+    if depth > MAX_GO_SCAN_DEPTH {
+        return false;
+    }
     let Ok(entries) = std::fs::read_dir(dir) else {
         return false;
     };
@@ -212,7 +230,7 @@ fn find_test_files_recursive(dir: &Path) -> bool {
             if !name.starts_with('.')
                 && name != "vendor"
                 && name != "node_modules"
-                && find_test_files_recursive(&path)
+                && find_test_files_recursive_inner(&path, depth + 1)
             {
                 return true;
             }

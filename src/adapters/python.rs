@@ -5,7 +5,9 @@ use std::time::Duration;
 use anyhow::Result;
 
 use super::util::duration_from_secs_safe;
-use super::{DetectionResult, TestAdapter, TestCase, TestRunResult, TestStatus, TestSuite};
+use super::{
+    ConfidenceScore, DetectionResult, TestAdapter, TestCase, TestRunResult, TestStatus, TestSuite,
+};
 
 pub struct PythonAdapter;
 
@@ -131,14 +133,29 @@ impl TestAdapter for PythonAdapter {
             "unittest"
         };
 
+        let is_pytest = framework == "pytest";
+        let is_django = framework == "django";
+        let has_test_dir = project_dir.join("tests").is_dir() || project_dir.join("test").is_dir();
+        let has_lock = project_dir.join("poetry.lock").exists()
+            || project_dir.join("Pipfile.lock").exists()
+            || project_dir.join("uv.lock").exists()
+            || project_dir.join("pdm.lock").exists();
+
+        let confidence = ConfidenceScore::base(0.50)
+            .signal(0.20, is_pytest)
+            .signal(0.15, is_django)
+            .signal(0.10, has_test_dir)
+            .signal(0.07, has_lock)
+            .signal(
+                0.07,
+                which::which("pytest").is_ok() || which::which("python").is_ok(),
+            )
+            .finish();
+
         Some(DetectionResult {
             language: "Python".into(),
             framework: framework.into(),
-            confidence: if Self::is_pytest(project_dir) {
-                0.95
-            } else {
-                0.7
-            },
+            confidence,
         })
     }
 
@@ -604,7 +621,7 @@ tests/test_calc.py::TestCalculator::test_div FAILED
         let adapter = PythonAdapter::new();
         let det = adapter.detect(dir.path()).unwrap();
         assert_eq!(det.framework, "pytest");
-        assert!(det.confidence > 0.9);
+        assert!(det.confidence > 0.65);
     }
 
     #[test]
@@ -701,6 +718,6 @@ tests/test_math.py::test_setup ERROR
         let adapter = PythonAdapter::new();
         let det = adapter.detect(dir.path()).unwrap();
         assert_eq!(det.framework, "unittest");
-        assert!(det.confidence < 0.8);
+        assert!(det.confidence < 0.6);
     }
 }

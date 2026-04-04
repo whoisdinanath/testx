@@ -6,7 +6,8 @@ use anyhow::Result;
 
 use super::util::duration_from_secs_safe;
 use super::{
-    DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus, TestSuite,
+    ConfidenceScore, DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus,
+    TestSuite,
 };
 
 pub struct PhpAdapter;
@@ -58,10 +59,20 @@ impl TestAdapter for PhpAdapter {
             return None;
         }
 
+        let confidence = ConfidenceScore::base(0.50)
+            .signal(0.15, Self::has_phpunit_config(project_dir))
+            .signal(0.10, Self::has_vendor_phpunit(project_dir))
+            .signal(
+                0.10,
+                project_dir.join("tests").is_dir() || project_dir.join("test").is_dir(),
+            )
+            .signal(0.07, which::which("php").is_ok())
+            .finish();
+
         Some(DetectionResult {
             language: "PHP".into(),
             framework: "PHPUnit".into(),
-            confidence: 0.9,
+            confidence,
         })
     }
 

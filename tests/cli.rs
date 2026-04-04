@@ -291,3 +291,314 @@ fn cli_init_refuses_existing() {
         .failure()
         .stderr(predicate::str::contains("already exists"));
 }
+
+// ─── Workspace CLI tests ───
+
+#[test]
+fn cli_workspace_list_discovers_projects() {
+    let tmp = TempDir::new().unwrap();
+
+    // Create a Rust project
+    let rust_dir = tmp.path().join("svc-rust");
+    fs::create_dir_all(&rust_dir).unwrap();
+    fs::write(rust_dir.join("Cargo.toml"), "[package]\nname = \"test\"\n").unwrap();
+
+    // Create a Go project
+    let go_dir = tmp.path().join("svc-go");
+    fs::create_dir_all(&go_dir).unwrap();
+    fs::write(go_dir.join("go.mod"), "module example.com/svc\n").unwrap();
+    fs::write(go_dir.join("main_test.go"), "package main\n").unwrap();
+
+    testx()
+        .args([
+            "workspace",
+            "--list",
+            "--path",
+            tmp.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Discovered"))
+        .stdout(predicate::str::contains("Rust"))
+        .stdout(predicate::str::contains("Go"));
+}
+
+#[test]
+fn cli_workspace_list_empty() {
+    let tmp = TempDir::new().unwrap();
+
+    testx()
+        .args([
+            "workspace",
+            "--list",
+            "--path",
+            tmp.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No testable projects found"));
+}
+
+#[test]
+fn cli_workspace_filter_language() {
+    let tmp = TempDir::new().unwrap();
+
+    // Create Rust + Go projects
+    let rust_dir = tmp.path().join("svc-rust");
+    fs::create_dir_all(&rust_dir).unwrap();
+    fs::write(rust_dir.join("Cargo.toml"), "[package]\nname = \"t\"\n").unwrap();
+
+    let go_dir = tmp.path().join("svc-go");
+    fs::create_dir_all(&go_dir).unwrap();
+    fs::write(go_dir.join("go.mod"), "module example.com/s\n").unwrap();
+    fs::write(go_dir.join("main_test.go"), "package main\n").unwrap();
+
+    testx()
+        .args([
+            "workspace",
+            "--list",
+            "--filter",
+            "rust",
+            "--path",
+            tmp.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Rust"))
+        .stdout(predicate::str::contains("1 project"));
+}
+
+#[test]
+fn cli_workspace_max_depth() {
+    let tmp = TempDir::new().unwrap();
+
+    // Create deeply nested project
+    let deep = tmp.path().join("a").join("b").join("c").join("d").join("e");
+    fs::create_dir_all(&deep).unwrap();
+    fs::write(deep.join("Cargo.toml"), "[package]\nname = \"deep\"\n").unwrap();
+
+    testx()
+        .args([
+            "workspace",
+            "--list",
+            "--max-depth",
+            "2",
+            "--path",
+            tmp.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No testable projects found"));
+}
+
+#[test]
+fn cli_workspace_run_rust_project() {
+    let tmp = TempDir::new().unwrap();
+
+    // Create a minimal Rust project that compiles
+    let rust_dir = tmp.path().join("my-crate");
+    fs::create_dir_all(rust_dir.join("src")).unwrap();
+    fs::write(
+        rust_dir.join("Cargo.toml"),
+        "[package]\nname = \"my-crate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    fs::write(
+        rust_dir.join("src/lib.rs"),
+        "#[test] fn it_works() { assert_eq!(2 + 2, 4); }\n",
+    )
+    .unwrap();
+
+    testx()
+        .args(["workspace", "--path", tmp.path().to_str().unwrap()])
+        .timeout(std::time::Duration::from_secs(120))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 passed"));
+}
+
+#[test]
+fn cli_workspace_json_output() {
+    let tmp = TempDir::new().unwrap();
+
+    let rust_dir = tmp.path().join("my-crate");
+    fs::create_dir_all(rust_dir.join("src")).unwrap();
+    fs::write(
+        rust_dir.join("Cargo.toml"),
+        "[package]\nname = \"my-crate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    fs::write(
+        rust_dir.join("src/lib.rs"),
+        "#[test] fn it_works() { assert_eq!(1, 1); }\n",
+    )
+    .unwrap();
+
+    testx()
+        .args([
+            "workspace",
+            "-o",
+            "json",
+            "--path",
+            tmp.path().to_str().unwrap(),
+        ])
+        .timeout(std::time::Duration::from_secs(120))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"projects_found\""))
+        .stdout(predicate::str::contains("\"total_tests\""));
+}
+
+#[test]
+fn cli_workspace_sequential() {
+    let tmp = TempDir::new().unwrap();
+
+    let rust_dir = tmp.path().join("my-crate");
+    fs::create_dir_all(rust_dir.join("src")).unwrap();
+    fs::write(
+        rust_dir.join("Cargo.toml"),
+        "[package]\nname = \"my-crate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    fs::write(
+        rust_dir.join("src/lib.rs"),
+        "#[test] fn ok() { assert!(true); }\n",
+    )
+    .unwrap();
+
+    testx()
+        .args([
+            "workspace",
+            "--sequential",
+            "--path",
+            tmp.path().to_str().unwrap(),
+        ])
+        .timeout(std::time::Duration::from_secs(120))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("sequential"))
+        .stdout(predicate::str::contains("1 passed"));
+}
+
+// ─── Stress CLI tests ───
+
+#[test]
+fn cli_stress_basic() {
+    let tmp = TempDir::new().unwrap();
+    fs::create_dir_all(tmp.path().join("src")).unwrap();
+    fs::write(
+        tmp.path().join("Cargo.toml"),
+        "[package]\nname = \"stress-test\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("src/lib.rs"),
+        "#[test] fn stable() { assert!(true); }\n",
+    )
+    .unwrap();
+
+    testx()
+        .args(["stress", "-n", "2", "--path", tmp.path().to_str().unwrap()])
+        .timeout(std::time::Duration::from_secs(120))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Stress Test Report"))
+        .stdout(predicate::str::contains("2/2 iterations"))
+        .stdout(predicate::str::contains("no flaky tests"));
+}
+
+#[test]
+fn cli_stress_json_output() {
+    let tmp = TempDir::new().unwrap();
+    fs::create_dir_all(tmp.path().join("src")).unwrap();
+    fs::write(
+        tmp.path().join("Cargo.toml"),
+        "[package]\nname = \"stress-json\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("src/lib.rs"),
+        "#[test] fn ok() { assert!(true); }\n",
+    )
+    .unwrap();
+
+    testx()
+        .args([
+            "stress",
+            "-n",
+            "2",
+            "-o",
+            "json",
+            "--path",
+            tmp.path().to_str().unwrap(),
+        ])
+        .timeout(std::time::Duration::from_secs(120))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("iterations_completed"))
+        .stdout(predicate::str::contains("all_passed"));
+}
+
+#[test]
+fn cli_stress_with_threshold() {
+    let tmp = TempDir::new().unwrap();
+    fs::create_dir_all(tmp.path().join("src")).unwrap();
+    fs::write(
+        tmp.path().join("Cargo.toml"),
+        "[package]\nname = \"stress-thr\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("src/lib.rs"),
+        "#[test] fn ok() { assert!(true); }\n",
+    )
+    .unwrap();
+
+    // All tests pass so threshold should pass
+    testx()
+        .args([
+            "stress",
+            "-n",
+            "2",
+            "--threshold",
+            "0.9",
+            "--path",
+            tmp.path().to_str().unwrap(),
+        ])
+        .timeout(std::time::Duration::from_secs(120))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("no flaky tests"));
+}
+
+#[test]
+fn cli_stress_fail_fast() {
+    let tmp = TempDir::new().unwrap();
+    fs::create_dir_all(tmp.path().join("src")).unwrap();
+    fs::write(
+        tmp.path().join("Cargo.toml"),
+        "[package]\nname = \"stress-ff\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    // This test always fails, so fail-fast should stop after iteration 1
+    fs::write(
+        tmp.path().join("src/lib.rs"),
+        "#[test] fn always_fail() { panic!(\"always\"); }\n",
+    )
+    .unwrap();
+
+    testx()
+        .args([
+            "stress",
+            "-n",
+            "5",
+            "--fail-fast",
+            "--path",
+            tmp.path().to_str().unwrap(),
+        ])
+        .timeout(std::time::Duration::from_secs(120))
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("1/5 iterations"))
+        .stdout(predicate::str::contains("stopped early"));
+}
