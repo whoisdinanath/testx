@@ -3,24 +3,43 @@ name: Feature Request
 about: Suggest a new feature for testx
 title: "[FEATURE] "
 labels: enhancement
+assignees: ""
 ---
 
-## Description
+## Summary
 
-A clear description of the feature you'd like.
+<!-- One-sentence description of the feature. -->
 
-## Use Case
+## Motivation
 
-Why is this feature needed? What problem does it solve?
+<!-- Why is this feature needed? What problem does it solve? What's your use case? -->
 
 ## Proposed Solution
 
-How you think this could be implemented.
+<!-- How do you think this should work? Include CLI usage examples if applicable. -->
+
+```bash
+# Example usage
+testx --new-flag value
+```
 
 ## Alternatives Considered
 
-Any alternative solutions you've considered.
+<!-- Have you considered other approaches? Why is this proposal better? -->
+
+## Scope
+
+<!-- Which part of testx would this affect? -->
+
+- [ ] New language adapter
+- [ ] New output format
+- [ ] New CLI flag/command
+- [ ] Configuration (`testx.toml`)
+- [ ] Plugin system
+- [ ] Performance
+- [ ] CI/CD integration
+- [ ] Other: \_\_\_
 
 ## Additional Context
 
-Any additional context or screenshots.
+<!-- Mockups, links to similar tools, config examples, etc. -->

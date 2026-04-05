@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use super::util::duration_from_secs_safe;
+use super::util::{combined_output, duration_from_secs_safe, truncate};
 use super::{
     ConfidenceScore, DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus,
     TestSuite,
@@ -66,8 +66,13 @@ impl TestAdapter for ElixirAdapter {
         Ok(cmd)
     }
 
+    fn filter_args(&self, pattern: &str) -> Vec<String> {
+        // mix test uses --only for tag filter
+        vec!["--only".to_string(), pattern.to_string()]
+    }
+
     fn parse_output(&self, stdout: &str, stderr: &str, exit_code: i32) -> TestRunResult {
-        let combined = format!("{}\n{}", stdout, stderr);
+        let combined = combined_output(stdout, stderr);
 
         // Try verbose/trace parsing first
         let trace_tests = parse_exunit_trace(&combined);
@@ -473,11 +478,7 @@ fn enrich_exunit_errors(suites: Vec<TestSuite>, failures: &[ExUnitFailure]) -> V
                         test.status = TestStatus::Failed;
                         if test.error.is_none() {
                             test.error = Some(TestError {
-                                message: if failure.message.len() > 500 {
-                                    format!("{}...", &failure.message[..500])
-                                } else {
-                                    failure.message.clone()
-                                },
+                                message: truncate(&failure.message, 500),
                                 location: failure.location.clone(),
                             });
                         }

@@ -4,28 +4,35 @@
 </p>
 
 <p align="center">
+  <a href="https://crates.io/crates/testx-cli"><img src="https://img.shields.io/crates/v/testx-cli" alt="crates.io"></a>
+  <a href="https://crates.io/crates/testx-cli"><img src="https://img.shields.io/crates/d/testx-cli" alt="Downloads"></a>
   <a href="https://github.com/whoisdinanath/testx/actions/workflows/ci.yml"><img src="https://github.com/whoisdinanath/testx/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/whoisdinanath/testx/releases/latest"><img src="https://img.shields.io/github/v/release/whoisdinanath/testx?label=release" alt="Release"></a>
+  <a href="https://testx-cli.readthedocs.io/"><img src="https://img.shields.io/badge/docs-readthedocs-blue?logo=readthedocs" alt="Docs"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License"></a>
   <img src="https://img.shields.io/badge/rust-1.87+-orange?logo=rust" alt="Rust 1.87+">
   <img src="https://img.shields.io/badge/languages-11-blueviolet" alt="11 Languages">
-  <img src="https://img.shields.io/badge/tests-889-brightgreen" alt="889 Tests">
+  <img src="https://img.shields.io/badge/tests-1137-brightgreen" alt="1137 Tests">
 </p>
 
 **testx** is a universal test runner that auto-detects your project's language and framework, runs your tests, and displays clean, unified output. Zero configuration required.
 
-```
-testx · Python (pytest)
-────────────────────────────────────────────────────────────
+<p align="center">
+  <img src="demo/demo.gif" alt="testx demo" width="800">
+</p>
 
-  ✓ tests/test_math.py
-    ✓ test_add                                         1ms
-    ✓ test_subtract                                    0ms
-    ✗ test_divide_by_zero                              1ms
+## Why testx?
 
-────────────────────────────────────────────────────────────
-  FAIL  2 passed, 1 failed (3 total) in 120ms
-```
+|                     | Without testx                 | With testx              |
+| ------------------- | ----------------------------- | ----------------------- |
+| **Rust**            | `cargo test`                  | `testx`                 |
+| **Python**          | `uv run pytest -v`            | `testx`                 |
+| **Go**              | `go test -v ./...`            | `testx`                 |
+| **JavaScript**      | `npx vitest run` / `npx jest` | `testx`                 |
+| **Java**            | `mvn test` / `gradle test`    | `testx`                 |
+| **Output**          | Different per language        | Unified, beautiful      |
+| **CI sharding**     | Manual config                 | `--partition slice:1/4` |
+| **Flaky detection** | Custom scripts                | `testx stress`          |
 
 ---
 
@@ -44,25 +51,32 @@ testx · Python (pytest)
 - **Parallel execution** — Run multiple test suites concurrently
 - **Coverage integration** — LCOV, Cobertura, JaCoCo, Go coverage
 - **Plugin system** — Custom adapters, reporter plugins, shell hooks
-- **History tracking** — Track test health scores and trends over time
+- **History tracking** — Track test health scores, flaky tests, and trends over time
+- **Monorepo support** — Scan and test all projects in a workspace with `testx workspace`
 
 ## Supported Languages
 
-| Language | Frameworks | Package Managers |
-|----------|-----------|-----------------|
-| **Rust** | cargo test | — |
-| **Go** | go test | — |
-| **Python** | pytest, unittest, Django | uv, poetry, pdm, venv |
-| **JavaScript / TypeScript** | Jest, Vitest, Mocha, AVA, Bun | npm, pnpm, yarn, bun |
-| **Java / Kotlin** | Maven Surefire, Gradle | mvn, gradle |
-| **C / C++** | Google Test, CTest, Meson | cmake, meson |
-| **Ruby** | RSpec, Minitest | bundler |
-| **Elixir** | ExUnit | mix |
-| **PHP** | PHPUnit | composer |
-| **C# / .NET / F#** | dotnet test | dotnet |
-| **Zig** | zig build test | — |
+| Language                    | Frameworks                    | Package Managers      |
+| --------------------------- | ----------------------------- | --------------------- |
+| **Rust**                    | cargo test                    | —                     |
+| **Go**                      | go test                       | —                     |
+| **Python**                  | pytest, unittest, Django      | uv, poetry, pdm, venv |
+| **JavaScript / TypeScript** | Jest, Vitest, Mocha, AVA, Bun | npm, pnpm, yarn, bun  |
+| **Java / Kotlin**           | Maven Surefire, Gradle        | mvn, gradle           |
+| **C / C++**                 | Google Test, CTest, Meson     | cmake, meson          |
+| **Ruby**                    | RSpec, Minitest               | bundler               |
+| **Elixir**                  | ExUnit                        | mix                   |
+| **PHP**                     | PHPUnit                       | composer              |
+| **C# / .NET / F#**          | dotnet test                   | dotnet                |
+| **Zig**                     | zig build test                | —                     |
 
 ## Installation
+
+### From crates.io
+
+```bash
+cargo install testx-cli
+```
 
 ### From source
 
@@ -189,6 +203,48 @@ testx --cache
 testx cache-clear
 ```
 
+### Monorepo / workspace
+
+Scan a monorepo and run tests across all detected projects:
+
+```bash
+# Discover and test all projects
+testx workspace
+
+# List projects without running
+testx workspace --list
+
+# Only test Rust and Python projects
+testx workspace --filter rust,python
+
+# Include directories normally skipped (e.g., packages/)
+testx workspace --include packages
+
+# Run sequentially instead of in parallel
+testx workspace --sequential
+```
+
+### Test history & analytics
+
+Track test health over time:
+
+```bash
+# Quick overview
+testx history
+
+# Flaky test report
+testx history flaky
+
+# Slowest tests trend
+testx history slow
+
+# Health score dashboard (A–F grading)
+testx history health
+
+# Last 50 runs
+testx history runs --last 50
+```
+
 ### Interactive test picker
 
 ```bash
@@ -204,6 +260,9 @@ testx --slowest 5        # Show 5 slowest tests
 testx --timeout 60       # Kill tests after 60 seconds
 testx --raw              # Show raw runner output
 testx -v                 # Verbose (show detected command)
+testx -w                 # Watch mode — re-run on file changes
+testx --retries 3        # Retry failed tests 3 times
+testx --reporter github  # Activate GitHub Actions reporter
 ```
 
 ## Configuration
@@ -262,28 +321,46 @@ cargo build --release
 ### Running the test suite
 
 ```bash
-cargo test            # Run all tests (889 tests)
+cargo test            # Run all tests (1134 tests)
 cargo clippy          # Lint (0 warnings)
 cargo fmt --check     # Format check
 ```
 
 ## Stats
 
-| Metric | Value |
-|--------|-------|
-| Languages supported | 11 |
-| Test frameworks | 20+ |
-| Source lines | ~29,000 |
-| Test count | 889 (846 unit + 43 integration) |
-| Binary size (release) | 2.9 MB |
-| Framework detection | ~5ms |
-| Rust source files | 53 |
-| Dependencies | minimal (clap, serde, colored, toml, anyhow) |
-| Clippy warnings | 0 |
+| Metric                | Value                                                |
+| --------------------- | ---------------------------------------------------- |
+| Languages supported   | 11                                                   |
+| Test frameworks       | 20+                                                  |
+| Source lines          | ~34,700                                              |
+| Test count            | 1,134 (1,080 unit + 33 CLI + 21 integration)         |
+| Binary size (release) | 3.8 MB                                               |
+| Framework detection   | ~5ms                                                 |
+| Rust source files     | 55                                                   |
+| Dependencies          | minimal (clap, serde, colored, toml, anyhow, notify) |
+| Clippy warnings       | 0                                                    |
+
+## Documentation
+
+Full documentation is available at **[testx-cli.readthedocs.io](https://testx-cli.readthedocs.io/)**.
+
+- [Getting Started](https://testx-cli.readthedocs.io/getting-started/installation/)
+- [Configuration Guide](https://testx-cli.readthedocs.io/guide/configuration/)
+- [Output Formats](https://testx-cli.readthedocs.io/guide/output-formats/)
+- [CI Sharding](https://testx-cli.readthedocs.io/guide/sharding/)
+- [Plugin System](https://testx-cli.readthedocs.io/guide/plugins/)
+- [CLI Reference](https://testx-cli.readthedocs.io/cli/)
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+We welcome contributions! Please read these before getting started:
+
+- **[Contributing Guide](CONTRIBUTING.md)** — Setup, workflow, and PR process
+- **[Coding Guidelines](.github/CODING_GUIDELINES.md)** — Architecture, code style, and module design
+- **[Bug Report Template](https://github.com/whoisdinanath/testx/issues/new?template=bug_report.md)** — Report a bug
+- **[Feature Request Template](https://github.com/whoisdinanath/testx/issues/new?template=feature_request.md)** — Suggest a feature
+
+Pull requests are reviewed against the [PR template](.github/PULL_REQUEST_TEMPLATE.md) checklist.
 
 ## License
 

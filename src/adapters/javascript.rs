@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use super::util::duration_from_secs_safe;
+use super::util::{combined_output, duration_from_secs_safe};
 use super::{
     ConfidenceScore, DetectionResult, TestAdapter, TestCase, TestRunResult, TestStatus, TestSuite,
 };
@@ -169,6 +169,7 @@ impl TestAdapter for JavaScriptAdapter {
             "vitest" => {
                 cmd = build_js_runner_cmd(pkg_manager, "vitest");
                 cmd.arg("run"); // non-watch mode
+                cmd.args(["--reporter", "verbose"]);
             }
             "jest" => {
                 cmd = build_js_runner_cmd(pkg_manager, "jest");
@@ -196,8 +197,12 @@ impl TestAdapter for JavaScriptAdapter {
         Ok(cmd)
     }
 
+    fn filter_args(&self, pattern: &str) -> Vec<String> {
+        vec!["-t".to_string(), pattern.to_string()]
+    }
+
     fn parse_output(&self, stdout: &str, stderr: &str, exit_code: i32) -> TestRunResult {
-        let combined = strip_ansi(&format!("{}\n{}", stdout, stderr));
+        let combined = strip_ansi(&combined_output(stdout, stderr));
         let failure_messages = parse_jest_failures(&combined);
         let mut suites: Vec<TestSuite> = Vec::new();
         let mut current_suite = String::new();
@@ -207,7 +212,10 @@ impl TestAdapter for JavaScriptAdapter {
             let trimmed = line.trim();
 
             // Jest/Vitest suite header: "PASS src/utils.test.ts" or "FAIL src/utils.test.ts"
-            if trimmed.starts_with("PASS ") || trimmed.starts_with("FAIL ") {
+            // Skip vitest verbose failure details like "FAIL  unit  file > describe > test"
+            if (trimmed.starts_with("PASS ") || trimmed.starts_with("FAIL "))
+                && !trimmed.contains(" > ")
+            {
                 // Flush previous suite
                 if !current_suite.is_empty() && !current_tests.is_empty() {
                     suites.push(TestSuite {
@@ -334,12 +342,30 @@ impl TestAdapter for JavaScriptAdapter {
         } else {
             // If we parsed individual lines, but a summary line shows more tests,
             // prefer the summary (this handles vitest default output where ✓ lines are
-            // file-level, not test-level)
+            // file-level, not test-level). But keep any error details from individual parsing.
             let summary = parse_jest_summary(&combined, exit_code);
             let inline_total: usize = suites.iter().map(|s| s.tests.len()).sum();
             let summary_total = summary.tests.len();
             if summary_total > inline_total && summary_total > 1 {
+                // Collect errors from individually parsed tests before replacing
+                let errors: Vec<(String, crate::adapters::TestError)> = suites
+                    .iter()
+                    .flat_map(|s| s.tests.iter())
+                    .filter_map(|t| t.error.as_ref().map(|e| (t.name.clone(), e.clone())))
+                    .collect();
                 suites = vec![summary];
+                // Re-attach errors to matching failed tests
+                if let Some(suite) = suites.first_mut() {
+                    for (name, error) in errors {
+                        if let Some(t) = suite
+                            .tests
+                            .iter_mut()
+                            .find(|t| t.name == name && t.error.is_none())
+                        {
+                            t.error = Some(error);
+                        }
+                    }
+                }
             }
         }
 
@@ -353,9 +379,10 @@ impl TestAdapter for JavaScriptAdapter {
     }
 }
 
-/// Parse "should work (5 ms)" → ("should work", Duration(5ms))
+/// Parse "should work (5 ms)" or "should work 5ms" → ("should work", Duration(5ms))
 fn parse_jest_test_line(line: &str) -> (String, Duration) {
     let trimmed = line.trim();
+    // Jest format: "should work (5 ms)"
     if let Some(paren_start) = trimmed.rfind('(')
         && let Some(paren_end) = trimmed.rfind(')')
     {
@@ -373,6 +400,26 @@ fn parse_jest_test_line(line: &str) -> (String, Duration) {
             duration_from_secs_safe(ms)
         };
         return (name, duration);
+    }
+    // Vitest verbose format: "test name 21ms" or "test name 1.5s"
+    if let Some(last_space) = trimmed.rfind(' ') {
+        let last_word = &trimmed[last_space + 1..];
+        if let Some(ms_str) = last_word.strip_suffix("ms")
+            && let Ok(ms) = ms_str.parse::<f64>()
+        {
+            return (
+                trimmed[..last_space].trim().to_string(),
+                Duration::from_millis(ms as u64),
+            );
+        }
+        if let Some(s_str) = last_word.strip_suffix('s')
+            && let Ok(secs) = s_str.parse::<f64>()
+        {
+            return (
+                trimmed[..last_space].trim().to_string(),
+                duration_from_secs_safe(secs),
+            );
+        }
     }
     (trimmed.to_string(), Duration::from_millis(0))
 }
@@ -746,6 +793,24 @@ Time:        0.456 s
     }
 
     #[test]
+    fn parse_vitest_test_line_duration_ms() {
+        let (name, dur) =
+            parse_jest_test_line("tests/unit/core/AxiosError.test.js > core > test name 21ms");
+        assert_eq!(
+            name,
+            "tests/unit/core/AxiosError.test.js > core > test name"
+        );
+        assert_eq!(dur, Duration::from_millis(21));
+    }
+
+    #[test]
+    fn parse_vitest_test_line_duration_zero() {
+        let (name, dur) = parse_jest_test_line("file.test.ts > should work 0ms");
+        assert_eq!(name, "file.test.ts > should work");
+        assert_eq!(dur, Duration::from_millis(0));
+    }
+
+    #[test]
     fn parse_jest_duration_seconds() {
         assert_eq!(
             parse_jest_duration("Time:        1.234 s"),
@@ -968,6 +1033,40 @@ Time:        0.5 s
         assert_eq!(result.total_passed(), 3565);
         assert_eq!(result.total_failed(), 10);
         assert_eq!(result.total_tests(), 3575);
+    }
+
+    #[test]
+    fn parse_vitest_verbose_output() {
+        let stdout = r#"
+ ✓  unit  tests/unit/core/AxiosError.test.js > core::AxiosError > creates an error 21ms
+ ✓  unit  tests/unit/core/AxiosError.test.js > core::AxiosError > serializes to JSON safely 4ms
+ ×  unit  tests/unit/adapters/http.test.js > supports http > should handle EPIPE
+
+      Tests  1 failed | 2 passed (3)
+   Duration  5.00s
+"#;
+        let adapter = JavaScriptAdapter::new();
+        let result = adapter.parse_output(stdout, "", 1);
+
+        assert_eq!(result.total_tests(), 3);
+        assert_eq!(result.total_passed(), 2);
+        assert_eq!(result.total_failed(), 1);
+
+        // Verify real test names, not synthetic test_N
+        let names: Vec<&str> = result.suites[0]
+            .tests
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect();
+        assert!(names[0].contains("creates an error"));
+        assert!(names[1].contains("serializes to JSON safely"));
+
+        // Verify durations were parsed from vitest format (no parens)
+        assert_eq!(
+            result.suites[0].tests[0].duration,
+            Duration::from_millis(21)
+        );
+        assert_eq!(result.suites[0].tests[1].duration, Duration::from_millis(4));
     }
 
     #[test]

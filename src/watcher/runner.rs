@@ -118,6 +118,8 @@ pub struct WatchRunner {
     stats: WatchStats,
     /// Names of tests that failed in the last run.
     failed_tests: Vec<String>,
+    /// Cached adapter name from first detection (avoids rescanning all adapters).
+    cached_adapter: Option<String>,
 }
 
 impl WatchRunner {
@@ -133,6 +135,7 @@ impl WatchRunner {
             options,
             stats: WatchStats::new(),
             failed_tests: Vec::new(),
+            cached_adapter: None,
         }
     }
 
@@ -255,8 +258,25 @@ impl WatchRunner {
             );
         }
 
+        // Reuse the adapter detected on the first run so we don't rescan
+        // all 11 adapters on every file change.
+        if config.adapter_override.is_none()
+            && let Some(ref cached) = self.cached_adapter
+        {
+            config.adapter_override = Some(cached.clone());
+        }
+
         let event_bus = EventBus::new();
         let mut runner = Runner::new(config).with_event_bus(event_bus);
+
+        // Cache the adapter name after the first successful detection
+        if self.cached_adapter.is_none() {
+            let engine = runner.engine();
+            if let Some(detected) = engine.detect(&self.project_dir) {
+                let name = engine.adapter(detected.adapter_index).name().to_string();
+                self.cached_adapter = Some(name);
+            }
+        }
 
         let start = Instant::now();
         let result = runner.run();
@@ -291,19 +311,10 @@ impl WatchRunner {
     /// can also check for terminal input.
     fn poll_changes_with_timeout(
         &self,
-        _watcher: &mut FileWatcher,
-        _timeout: Duration,
+        watcher: &mut FileWatcher,
+        timeout: Duration,
     ) -> Vec<PathBuf> {
-        // We use a non-blocking approach: check for pending events
-        // without fully blocking on wait_for_changes
-        // The FileWatcher.wait_for_changes blocks, so we use try-poll approach
-        // by sleeping a small amount and checking
-        std::thread::sleep(Duration::from_millis(100));
-
-        // Drain any pending events from the watcher's internal channel
-        // This is a simplified approach - the watcher's recv_timeout in
-        // wait_for_changes handles the actual timing
-        Vec::new()
+        watcher.poll_changes(timeout)
     }
 
     /// Print summary after a single run.

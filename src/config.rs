@@ -166,15 +166,25 @@ pub struct CoverageConfig {
 }
 
 /// History/analytics configuration section.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct HistoryConfig {
-    /// Enable history recording
+    /// Enable history recording (default: true)
     pub enabled: bool,
     /// Maximum age of history entries in days
     pub max_age_days: Option<u32>,
     /// Database path (default: .testx/history.db)
     pub db_path: Option<String>,
+}
+
+impl Default for HistoryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_age_days: None,
+            db_path: None,
+        }
+    }
 }
 
 impl Config {
@@ -187,15 +197,27 @@ impl Config {
         }
 
         match std::fs::read_to_string(&config_path) {
-            Ok(content) => match toml::from_str(&content) {
-                Ok(config) => config,
+            Ok(content) => match toml::from_str::<Config>(&content) {
+                Ok(mut config) => {
+                    // Clamp custom adapter confidence values to [0.0, 1.0]
+                    if let Some(adapters) = &mut config.custom_adapter {
+                        for adapter in adapters {
+                            adapter.confidence = adapter.confidence.clamp(0.0, 1.0);
+                        }
+                    }
+                    config
+                }
                 Err(e) => {
-                    eprintln!("Warning: failed to parse testx.toml: {e}");
+                    eprintln!("⚠ warning: failed to parse testx.toml: {e}");
+                    eprintln!(
+                        "  Using default configuration. Fix testx.toml to apply your settings."
+                    );
                     Self::default()
                 }
             },
             Err(e) => {
-                eprintln!("Warning: failed to read testx.toml: {e}");
+                eprintln!("⚠ warning: failed to read testx.toml: {e}");
+                eprintln!("  Using default configuration. Check file permissions.");
                 Self::default()
             }
         }

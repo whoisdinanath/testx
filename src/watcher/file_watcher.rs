@@ -82,22 +82,12 @@ impl FileWatcher {
     pub fn wait_for_changes(&mut self) -> Vec<PathBuf> {
         loop {
             // Drain pending events
-            loop {
-                match self.rx.try_recv() {
-                    Ok(path) => {
-                        if !self.should_ignore(&path) {
-                            self.debouncer.add(path);
-                        }
-                    }
-                    Err(TryRecvError::Empty) => break,
-                    Err(TryRecvError::Disconnected) => {
-                        // Watcher thread died, return pending
-                        if self.debouncer.has_pending() {
-                            return self.debouncer.flush();
-                        }
-                        return Vec::new();
-                    }
+            if self.drain_pending() {
+                // Watcher disconnected, return what we have
+                if self.debouncer.has_pending() {
+                    return self.debouncer.flush();
                 }
+                return Vec::new();
             }
 
             // Check if we should flush
@@ -124,6 +114,71 @@ impl FileWatcher {
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(mpsc::RecvTimeoutError::Disconnected) => return Vec::new(),
+            }
+        }
+    }
+
+    /// Non-blocking poll for file changes with a timeout.
+    ///
+    /// Returns changed paths (debounced) or an empty vec if no changes
+    /// occurred within the timeout. Does NOT block indefinitely.
+    pub fn poll_changes(&mut self, timeout: Duration) -> Vec<PathBuf> {
+        let deadline = std::time::Instant::now() + timeout;
+
+        loop {
+            // Drain pending events
+            if self.drain_pending() {
+                if self.debouncer.has_pending() {
+                    return self.debouncer.flush();
+                }
+                return Vec::new();
+            }
+
+            // Check if we should flush
+            if self.debouncer.should_flush() {
+                return self.debouncer.flush();
+            }
+
+            if self.debouncer.has_pending() {
+                let remaining = self.debouncer.time_remaining();
+                if remaining > Duration::ZERO {
+                    std::thread::sleep(remaining.min(Duration::from_millis(50)));
+                    continue;
+                }
+                return self.debouncer.flush();
+            }
+
+            // Check if we've exceeded the timeout
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                return Vec::new();
+            }
+
+            let wait = (deadline - now).min(Duration::from_millis(100));
+            match self.rx.recv_timeout(wait) {
+                Ok(path) => {
+                    if !self.should_ignore(&path) {
+                        self.debouncer.add(path);
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => return Vec::new(),
+            }
+        }
+    }
+
+    /// Drain all pending events from the channel.
+    /// Returns true if the channel is disconnected.
+    fn drain_pending(&mut self) -> bool {
+        loop {
+            match self.rx.try_recv() {
+                Ok(path) => {
+                    if !self.should_ignore(&path) {
+                        self.debouncer.add(path);
+                    }
+                }
+                Err(TryRecvError::Empty) => return false,
+                Err(TryRecvError::Disconnected) => return true,
             }
         }
     }

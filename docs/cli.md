@@ -21,6 +21,8 @@ If no command is given, `run` is used by default.
 | `impact`              | Analyze test impact from git changes    |
 | `pick [-- ARGS]`      | Interactive fuzzy test picker           |
 | `cache-clear`         | Clear the smart test cache              |
+| `workspace`           | Scan monorepo and run tests across all projects |
+| `history`             | Show test history, trends, and flaky analytics  |
 
 ## Global options
 
@@ -35,6 +37,9 @@ If no command is given, `run` is used by default.
 | `--partition` |       | STRING  | —        | CI sharding: `slice:M/N` or `hash:M/N`                                           |
 | `--affected`  |       | MODE    | —        | Skip if no git changes. Modes: `head`, `staged`, `branch:<name>`, `commit:<sha>` |
 | `--cache`     |       | —       | —        | Skip re-running if nothing changed                                               |
+| `--watch`     | `-w`  | —       | —        | Watch mode — re-run tests on file changes                                        |
+| `--retries`   |       | N       | —        | Retry failed tests N times before reporting failure                              |
+| `--reporter`  |       | STRING  | —        | Activate a reporter plugin: `github`, `markdown`, `html`, `notify`               |
 
 ## Stress options
 
@@ -49,6 +54,25 @@ If no command is given, `run` is used by default.
 | Flag     | Type | Default | Description                                                  |
 | -------- | ---- | ------- | ------------------------------------------------------------ |
 | `--mode` | MODE | `head`  | Diff mode: `head`, `staged`, `branch:<name>`, `commit:<sha>` |
+
+## Workspace options
+
+| Flag             | Short | Type    | Default | Description                                                         |
+| ---------------- | ----- | ------- | ------- | ------------------------------------------------------------------- |
+| `--max-depth`    |       | N       | `5`     | Maximum directory depth to scan (0 = unlimited)                     |
+| `--jobs`         | `-j`  | N       | `0`     | Maximum parallel jobs (0 = auto-detect CPUs)                        |
+| `--sequential`   |       | —       | —       | Run projects sequentially instead of in parallel                    |
+| `--fail-fast`    |       | —       | —       | Stop on first project failure                                       |
+| `--filter`       |       | STRING  | —       | Filter to specific languages (comma-separated, e.g., "rust,python") |
+| `--include`      |       | STRING  | —       | Include directories normally skipped (e.g., "packages,vendor")      |
+| `--list`         |       | —       | —       | Only list discovered projects, don't run tests                      |
+
+## History options
+
+| Flag     | Type | Default   | Description                                             |
+| -------- | ---- | --------- | ------------------------------------------------------- |
+| `--last` | N    | `20`      | Number of recent runs to analyze                        |
+| view     | ENUM | `summary` | View: `summary`, `runs`, `flaky`, `slow`, `health`     |
 
 ## Shell completions
 
@@ -71,7 +95,6 @@ testx completions powershell >> $PROFILE
 | Variable    | Effect                  |
 | ----------- | ----------------------- |
 | `NO_COLOR`  | Disables colored output |
-| `CI`        | Disables colored output |
 | `TERM=dumb` | Disables colored output |
 
 ## Exit codes

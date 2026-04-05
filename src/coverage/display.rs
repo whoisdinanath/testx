@@ -87,8 +87,9 @@ fn write_file_table(out: &mut String, result: &CoverageResult) {
 
     for file in &sorted_files {
         let name = file.path.to_string_lossy();
-        let display_name = if name.len() > max_name {
-            format!("…{}", &name[name.len() - max_name + 1..])
+        let display_name = if name.len() > max_name && max_name > 0 {
+            let start = name.ceil_char_boundary(name.len().saturating_sub(max_name - 1));
+            format!("…{}", &name[start..])
         } else {
             name.to_string()
         };

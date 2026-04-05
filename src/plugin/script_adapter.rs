@@ -114,10 +114,36 @@ impl ScriptAdapterConfig {
         false
     }
 
-    /// Get the effective working directory.
+    /// Get the effective working directory, validated against path traversal.
     pub fn effective_working_dir(&self, project_dir: &Path) -> PathBuf {
         match &self.working_dir {
-            Some(dir) => project_dir.join(dir),
+            Some(dir) => {
+                let dir_path = std::path::Path::new(dir);
+                // Reject absolute paths and paths containing ".." components
+                // to prevent path traversal even when the target doesn't exist yet.
+                if dir_path.is_absolute()
+                    || dir_path
+                        .components()
+                        .any(|c| matches!(c, std::path::Component::ParentDir))
+                {
+                    return project_dir.to_path_buf();
+                }
+                let candidate = project_dir.join(dir);
+                // If both paths can be resolved, verify the result stays
+                // within project_dir.
+                if let (Ok(resolved), Ok(base)) =
+                    (candidate.canonicalize(), project_dir.canonicalize())
+                {
+                    if resolved.starts_with(&base) {
+                        return resolved;
+                    }
+                    return base;
+                }
+                // If canonicalize fails (target doesn't exist yet or permissions),
+                // return the candidate since we've already verified it has no
+                // ".." components above — so it cannot escape project_dir.
+                candidate
+            }
             None => project_dir.to_path_buf(),
         }
     }
@@ -1213,5 +1239,593 @@ mod tests {
         let result = parse_script_output(&OutputParser::Json, output, "", 0);
         assert_eq!(result.total_tests(), 1);
         assert_eq!(result.total_passed(), 1);
+    }
+
+    // ─── Edge Case Tests ────────────────────────────────────────────────
+
+    // --- Config edge cases ---
+
+    #[test]
+    fn config_detect_nonexistent_dir() {
+        let config = ScriptAdapterConfig::new("test", "Makefile", "make");
+        assert!(!config.detect(&PathBuf::from("/nonexistent/path/xyz")));
+    }
+
+    #[test]
+    fn config_detect_with_pattern_nonexistent() {
+        let mut config = ScriptAdapterConfig::new("test", "nonexistent.xyz", "cmd");
+        config.detect_pattern = Some("src/*.test".into());
+        assert!(!config.detect(&PathBuf::from("/nonexistent/path")));
+    }
+
+    #[test]
+    fn config_empty_args() {
+        let config = ScriptAdapterConfig::new("test", "f", "cmd");
+        assert_eq!(config.full_command(), "cmd");
+    }
+
+    #[test]
+    fn config_multiple_env_vars() {
+        let config = ScriptAdapterConfig::new("test", "f", "cmd")
+            .with_env("A", "1")
+            .with_env("B", "2")
+            .with_env("C", "3");
+        assert_eq!(config.env.len(), 3);
+    }
+
+    #[test]
+    fn config_chained_builders() {
+        let config = ScriptAdapterConfig::new("test", "f", "cmd")
+            .with_parser(OutputParser::Json)
+            .with_args(vec!["--a".into()])
+            .with_working_dir("build")
+            .with_env("X", "Y")
+            .with_parser(OutputParser::Tap); // override parser
+        assert_eq!(config.parser, OutputParser::Tap);
+        assert_eq!(config.working_dir, Some("build".into()));
+    }
+
+    // --- JSON parser edge cases ---
+
+    #[test]
+    fn parse_json_empty_object() {
+        let result = parse_json_output("{}", "", 0);
+        assert_eq!(result.total_tests(), 1); // fallback
+        assert_eq!(result.total_passed(), 1);
+    }
+
+    #[test]
+    fn parse_json_empty_suites_array() {
+        let result = parse_json_output(r#"{"suites": []}"#, "", 0);
+        assert_eq!(result.total_tests(), 1); // fallback
+    }
+
+    #[test]
+    fn parse_json_empty_tests_array() {
+        let result = parse_json_output(r#"{"tests": []}"#, "", 0);
+        assert_eq!(result.total_tests(), 1); // fallback
+    }
+
+    #[test]
+    fn parse_json_empty_flat_array() {
+        let result = parse_json_output("[]", "", 0);
+        assert_eq!(result.total_tests(), 1); // fallback
+    }
+
+    #[test]
+    fn parse_json_unknown_status() {
+        let json = r#"[{"name": "t1", "status": "wonky"}]"#;
+        let result = parse_json_output(json, "", 0);
+        // Unknown status → test filtered out → fallback
+        assert_eq!(result.total_tests(), 1);
+    }
+
+    #[test]
+    fn parse_json_missing_name() {
+        let json = r#"[{"status": "passed"}]"#;
+        let result = parse_json_output(json, "", 0);
+        assert_eq!(result.total_tests(), 1); // fallback: no name means filtered
+    }
+
+    #[test]
+    fn parse_json_missing_status() {
+        let json = r#"[{"name": "t1"}]"#;
+        let result = parse_json_output(json, "", 0);
+        assert_eq!(result.total_tests(), 1); // fallback: no status means filtered
+    }
+
+    #[test]
+    fn parse_json_all_status_synonyms() {
+        let json = r#"[
+            {"name": "t1", "status": "pass"},
+            {"name": "t2", "status": "ok"},
+            {"name": "t3", "status": "success"},
+            {"name": "t4", "status": "fail"},
+            {"name": "t5", "status": "error"},
+            {"name": "t6", "status": "failure"},
+            {"name": "t7", "status": "skip"},
+            {"name": "t8", "status": "pending"},
+            {"name": "t9", "status": "ignored"}
+        ]"#;
+        let result = parse_json_output(json, "", 1);
+        assert_eq!(result.total_tests(), 9);
+        assert_eq!(result.total_passed(), 3);
+        assert_eq!(result.total_failed(), 3);
+        assert_eq!(result.total_skipped(), 3);
+    }
+
+    #[test]
+    fn parse_json_with_duration_ms() {
+        let json = r#"[{"name": "slow", "status": "passed", "duration": 1500}]"#;
+        let result = parse_json_output(json, "", 0);
+        let test = &result.suites[0].tests[0];
+        assert!(test.duration >= Duration::from_millis(1400)); // 1500ms / 1000 = 1.5s
+    }
+
+    #[test]
+    fn parse_json_error_as_string() {
+        let json = r#"[{"name": "t1", "status": "failed", "error": "boom"}]"#;
+        let result = parse_json_output(json, "", 1);
+        let test = &result.suites[0].tests[0];
+        assert!(test.error.is_some());
+        assert_eq!(test.error.as_ref().unwrap().message, "boom");
+    }
+
+    #[test]
+    fn parse_json_error_as_object() {
+        let json = r#"[{"name": "t1", "status": "failed", "error": {"message": "bad", "location": "foo.rs:5"}}]"#;
+        let result = parse_json_output(json, "", 1);
+        let test = &result.suites[0].tests[0];
+        let err = test.error.as_ref().unwrap();
+        assert_eq!(err.message, "bad");
+        assert_eq!(err.location.as_deref(), Some("foo.rs:5"));
+    }
+
+    #[test]
+    fn parse_json_nested_suites_with_names() {
+        let json = r#"{"suites": [
+            {"name": "s1", "tests": [{"name": "t1", "status": "passed"}]},
+            {"name": "s2", "tests": [{"name": "t2", "status": "failed"}]}
+        ]}"#;
+        let result = parse_json_output(json, "", 1);
+        assert_eq!(result.suites.len(), 2);
+        assert_eq!(result.suites[0].name, "s1");
+        assert_eq!(result.suites[1].name, "s2");
+    }
+
+    #[test]
+    fn parse_json_tests_with_custom_suite_name() {
+        let json = r#"{"name": "my-suite", "tests": [{"name": "t1", "status": "passed"}]}"#;
+        let result = parse_json_output(json, "", 0);
+        assert_eq!(result.suites[0].name, "my-suite");
+    }
+
+    #[test]
+    fn parse_json_stderr_ignored() {
+        let json = r#"[{"name": "t", "status": "passed"}]"#;
+        let result = parse_json_output(json, "STDERR NOISE", 0);
+        assert_eq!(result.total_passed(), 1);
+    }
+
+    // --- TAP parser edge cases ---
+
+    #[test]
+    fn parse_tap_only_plan_no_tests() {
+        let result = parse_tap_output("1..0\n", 0);
+        assert_eq!(result.total_tests(), 1); // fallback
+    }
+
+    #[test]
+    fn parse_tap_plan_at_end() {
+        let output = "ok 1 - first\nok 2 - second\n1..2\n";
+        let result = parse_tap_output(output, 0);
+        assert_eq!(result.total_tests(), 2);
+        assert_eq!(result.total_passed(), 2);
+    }
+
+    #[test]
+    fn parse_tap_diagnostic_lines_ignored() {
+        let output = "# running tests\nok 1 - test\n# end\n";
+        let result = parse_tap_output(output, 0);
+        assert_eq!(result.total_tests(), 1);
+    }
+
+    #[test]
+    fn parse_tap_mixed_pass_fail_skip() {
+        let output =
+            "1..4\nok 1 - a\nnot ok 2 - b\nok 3 - c # SKIP reason\nnot ok 4 - d # TODO later\n";
+        let result = parse_tap_output(output, 1);
+        assert_eq!(result.total_passed(), 1);
+        assert_eq!(result.total_failed(), 1);
+        assert_eq!(result.total_skipped(), 2); // SKIP + TODO
+    }
+
+    #[test]
+    fn parse_tap_lowercase_skip() {
+        let output = "ok 1 - t # skip not ready\n";
+        let result = parse_tap_output(output, 0);
+        assert_eq!(result.total_skipped(), 1);
+    }
+
+    #[test]
+    fn parse_tap_no_description() {
+        let output = "ok 1\nnot ok 2\n";
+        let result = parse_tap_output(output, 1);
+        assert_eq!(result.total_tests(), 2);
+    }
+
+    #[test]
+    fn parse_tap_large_test_numbers() {
+        let output = "ok 999 - big number test\n";
+        let result = parse_tap_output(output, 0);
+        assert_eq!(result.total_tests(), 1);
+    }
+
+    #[test]
+    fn parse_tap_failed_test_has_error() {
+        let output = "not ok 1 - broken\n";
+        let result = parse_tap_output(output, 1);
+        let test = &result.suites[0].tests[0];
+        assert_eq!(test.status, TestStatus::Failed);
+        assert!(test.error.is_some());
+        assert_eq!(test.error.as_ref().unwrap().message, "Test failed");
+    }
+
+    // --- Lines parser edge cases ---
+
+    #[test]
+    fn parse_lines_blank_lines_ignored() {
+        let output = "\n\nok test1\n\n\nfail test2\n\n";
+        let result = parse_lines_output(output, 1);
+        assert_eq!(result.total_tests(), 2);
+    }
+
+    #[test]
+    fn parse_lines_colon_format() {
+        let output = "ok: test1\nfail: test2\nskip: test3\n";
+        let result = parse_lines_output(output, 1);
+        assert_eq!(result.total_tests(), 3);
+    }
+
+    #[test]
+    fn parse_lines_all_pass_variants() {
+        let output = "ok t1\npass t2\npassed t3\nPASS t4\nPASSED t5\nOK t6\n✓ t7\n✔ t8\n";
+        let result = parse_lines_output(output, 0);
+        assert_eq!(result.total_passed(), 8);
+    }
+
+    #[test]
+    fn parse_lines_all_fail_variants() {
+        let output = "fail t1\nfailed t2\nerror t3\nFAIL t4\nFAILED t5\nERROR t6\n✗ t7\n✘ t8\n";
+        let result = parse_lines_output(output, 1);
+        assert_eq!(result.total_failed(), 8);
+    }
+
+    #[test]
+    fn parse_lines_all_skip_variants() {
+        let output = "skip t1\nskipped t2\npending t3\nSKIP t4\nSKIPPED t5\nPENDING t6\n";
+        let result = parse_lines_output(output, 0);
+        assert_eq!(result.total_skipped(), 6);
+    }
+
+    #[test]
+    fn parse_lines_failed_has_error() {
+        let output = "fail broken_test\n";
+        let result = parse_lines_output(output, 1);
+        let test = &result.suites[0].tests[0];
+        assert!(test.error.is_some());
+    }
+
+    #[test]
+    fn parse_lines_passed_has_no_error() {
+        let output = "ok good_test\n";
+        let result = parse_lines_output(output, 0);
+        let test = &result.suites[0].tests[0];
+        assert!(test.error.is_none());
+    }
+
+    #[test]
+    fn parse_lines_only_noise() {
+        let output = "compiling...\nrunning tests...\ndone\n";
+        let result = parse_lines_output(output, 0);
+        assert_eq!(result.total_tests(), 1); // fallback
+    }
+
+    // --- JUnit XML parser edge cases ---
+
+    #[test]
+    fn parse_junit_multiple_suites() {
+        let xml = r#"<testsuites>
+  <testsuite name="s1" tests="1">
+    <testcase name="t1" time="0.01"/>
+  </testsuite>
+  <testsuite name="s2" tests="1">
+    <testcase name="t2" time="0.02"/>
+  </testsuite>
+</testsuites>"#;
+        let result = parse_junit_output(xml, 0);
+        // Note: current parser finds testcases regardless of suite nesting
+        assert!(result.total_tests() >= 2);
+    }
+
+    #[test]
+    fn parse_junit_self_closing_testcase() {
+        let xml = r#"<testsuite name="t" tests="1">
+  <testcase name="fast" classname="Test" time="0.001"/>
+</testsuite>"#;
+        let result = parse_junit_output(xml, 0);
+        assert_eq!(result.total_passed(), 1);
+    }
+
+    #[test]
+    fn parse_junit_error_element() {
+        let xml = r#"<testsuite name="t" tests="1">
+  <testcase name="crasher" time="0.01">
+    <error message="segfault"/>
+  </testcase>
+</testsuite>"#;
+        let result = parse_junit_output(xml, 1);
+        assert_eq!(result.total_failed(), 1);
+        let test = &result.suites[0].tests[0];
+        assert_eq!(test.error.as_ref().unwrap().message, "segfault");
+    }
+
+    #[test]
+    fn parse_junit_no_time_attribute() {
+        let xml = r#"<testsuite name="t" tests="1">
+  <testcase name="notime"/>
+</testsuite>"#;
+        let result = parse_junit_output(xml, 0);
+        assert_eq!(result.total_tests(), 1);
+        assert_eq!(result.suites[0].tests[0].duration, Duration::ZERO);
+    }
+
+    #[test]
+    fn parse_junit_invalid_xml() {
+        let result = parse_junit_output("not xml at all <<<>>>", 1);
+        assert_eq!(result.total_tests(), 1); // fallback
+    }
+
+    #[test]
+    fn parse_junit_testcases_without_testsuite() {
+        let xml = r#"<testcase name="orphan1" time="0.1"/>
+<testcase name="orphan2" time="0.2"/>"#;
+        let result = parse_junit_output(xml, 0);
+        assert_eq!(result.total_tests(), 2);
+    }
+
+    // --- Regex parser edge cases ---
+
+    #[test]
+    fn parse_regex_no_matches() {
+        let config = RegexParserConfig {
+            pass_pattern: "PASS: (.*)".into(),
+            fail_pattern: "FAIL: (.*)".into(),
+            skip_pattern: None,
+            name_group: 1,
+            duration_group: None,
+        };
+        let result = parse_regex_output("no matching lines here", &config, 0);
+        assert_eq!(result.total_tests(), 1); // fallback
+    }
+
+    #[test]
+    fn parse_regex_with_duration() {
+        let config = RegexParserConfig {
+            pass_pattern: "PASS (.*) (.*)ms".into(),
+            fail_pattern: "FAIL (.*) (.*)ms".into(),
+            skip_pattern: None,
+            name_group: 1,
+            duration_group: Some(2),
+        };
+        let output = "PASS test_one 150ms\nFAIL test_two 50ms\n";
+        let result = parse_regex_output(output, &config, 1);
+        assert_eq!(result.total_tests(), 2);
+        // Duration from group: 150ms parsed
+        let pass_test = &result.suites[0].tests[0];
+        assert!(pass_test.duration > Duration::ZERO);
+    }
+
+    #[test]
+    fn parse_regex_empty_capture_filtered() {
+        let config = RegexParserConfig {
+            pass_pattern: "PASS:(.*)".into(),
+            fail_pattern: "FAIL:(.*)".into(),
+            skip_pattern: None,
+            name_group: 1,
+            duration_group: None,
+        };
+        // Empty name after "PASS:" → filtered out
+        let result = parse_regex_output("PASS:", &config, 0);
+        assert_eq!(result.total_tests(), 1); // fallback
+    }
+
+    // --- Simple pattern match edge cases ---
+
+    #[test]
+    fn simple_match_empty_pattern_empty_input() {
+        let result = simple_pattern_match("", "");
+        assert!(result.is_some());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn simple_match_empty_pattern_nonempty_input() {
+        let result = simple_pattern_match("", "hello");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn simple_match_nonempty_pattern_empty_input() {
+        let result = simple_pattern_match("hello", "");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn simple_match_capture_at_start() {
+        let result = simple_pattern_match("(.*) done", "testing done");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), vec!["testing"]);
+    }
+
+    #[test]
+    fn simple_match_capture_in_middle() {
+        let result = simple_pattern_match("start (.*) end", "start middle end");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), vec!["middle"]);
+    }
+
+    #[test]
+    fn simple_match_adjacent_groups() {
+        // This tests the greedy behavior — first capture eats all before second literal
+        let result = simple_pattern_match("(.*):(.*)!", "key:value!");
+        assert!(result.is_some());
+        let caps = result.unwrap();
+        assert_eq!(caps[0], "key");
+        assert_eq!(caps[1], "value");
+    }
+
+    #[test]
+    fn simple_match_wildcard_at_end() {
+        let result = simple_pattern_match("hello .*", "hello world more stuff");
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn simple_match_partial_mismatch() {
+        let result = simple_pattern_match("abc", "abx");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn simple_match_pattern_longer_than_input() {
+        let result = simple_pattern_match("hello world", "hello");
+        assert!(result.is_none());
+    }
+
+    // --- Fallback result edge cases ---
+
+    #[test]
+    fn fallback_empty_stdout() {
+        let result = fallback_result("", 1, "test");
+        assert_eq!(result.total_failed(), 1);
+        // Error message should be "Test failed" since no lines to take
+        assert_eq!(
+            result.suites[0].tests[0].error.as_ref().unwrap().message,
+            "Test failed"
+        );
+    }
+
+    #[test]
+    fn fallback_multiline_takes_first() {
+        let result = fallback_result("first line\nsecond line", 1, "test");
+        assert_eq!(
+            result.suites[0].tests[0].error.as_ref().unwrap().message,
+            "first line"
+        );
+    }
+
+    #[test]
+    fn fallback_parser_name_in_suite() {
+        let result = fallback_result("", 0, "myparser");
+        assert_eq!(result.suites[0].name, "myparser-output");
+        assert!(result.suites[0].tests[0].name.contains("myparser"));
+    }
+
+    #[test]
+    fn fallback_exit_zero_is_pass() {
+        let result = fallback_result("anything", 0, "x");
+        assert_eq!(result.total_passed(), 1);
+        assert!(result.suites[0].tests[0].error.is_none());
+    }
+
+    #[test]
+    fn fallback_exit_nonzero_is_fail() {
+        let result = fallback_result("anything", 42, "x");
+        assert_eq!(result.total_failed(), 1);
+        assert!(result.suites[0].tests[0].error.is_some());
+    }
+
+    // --- parse_script_output delegation edge cases ---
+
+    #[test]
+    fn script_output_delegates_to_junit() {
+        let xml = r#"<testsuite name="t" tests="1">
+  <testcase name="t1" time="0.01"/>
+</testsuite>"#;
+        let result = parse_script_output(&OutputParser::Junit, xml, "", 0);
+        assert_eq!(result.total_passed(), 1);
+    }
+
+    #[test]
+    fn script_output_delegates_to_regex() {
+        let config = RegexParserConfig {
+            pass_pattern: "PASS (.*)".into(),
+            fail_pattern: "FAIL (.*)".into(),
+            skip_pattern: None,
+            name_group: 1,
+            duration_group: None,
+        };
+        let result = parse_script_output(
+            &OutputParser::Regex(config),
+            "PASS test1\nFAIL test2\n",
+            "",
+            1,
+        );
+        assert_eq!(result.total_tests(), 2);
+    }
+
+    // --- XML attr edge cases ---
+
+    #[test]
+    fn xml_attr_empty_value() {
+        assert_eq!(
+            extract_xml_attr(r#"<test name="">"#, "name"),
+            Some("".into())
+        );
+    }
+
+    #[test]
+    fn xml_attr_with_spaces() {
+        assert_eq!(
+            extract_xml_attr(r#"<test name="hello world">"#, "name"),
+            Some("hello world".into())
+        );
+    }
+
+    #[test]
+    fn xml_attr_multiple_attrs() {
+        let tag = r#"<testcase name="add" classname="Math" time="1.5"/>"#;
+        assert_eq!(extract_xml_attr(tag, "name"), Some("add".into()));
+        assert_eq!(extract_xml_attr(tag, "classname"), Some("Math".into()));
+        assert_eq!(extract_xml_attr(tag, "time"), Some("1.5".into()));
+    }
+
+    // --- OutputParser enum equality ---
+
+    #[test]
+    fn output_parser_equality() {
+        assert_eq!(OutputParser::Json, OutputParser::Json);
+        assert_eq!(OutputParser::Tap, OutputParser::Tap);
+        assert_ne!(OutputParser::Json, OutputParser::Tap);
+    }
+
+    #[test]
+    fn output_parser_debug() {
+        let dbg = format!("{:?}", OutputParser::Lines);
+        assert_eq!(dbg, "Lines");
+    }
+
+    #[test]
+    fn regex_parser_config_clone() {
+        let config = RegexParserConfig {
+            pass_pattern: "P (.*)".into(),
+            fail_pattern: "F (.*)".into(),
+            skip_pattern: Some("S (.*)".into()),
+            name_group: 1,
+            duration_group: Some(2),
+        };
+        let cloned = config.clone();
+        assert_eq!(cloned, config);
     }
 }

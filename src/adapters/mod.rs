@@ -200,4 +200,18 @@ pub trait TestAdapter {
     fn check_runner(&self) -> Option<String> {
         None // Default: no check
     }
+
+    /// Return framework-specific CLI arguments to filter tests by pattern.
+    ///
+    /// Different test frameworks accept filters in different ways:
+    /// - Rust: positional arg (regex)
+    /// - Go: `-run <pattern>`
+    /// - Python: `-k <pattern>`
+    /// - JS: `-t <pattern>`
+    ///
+    /// Returns arguments to append to `extra_args`.
+    fn filter_args(&self, pattern: &str) -> Vec<String> {
+        // Default: pass pattern as a positional argument
+        vec![pattern.to_string()]
+    }
 }

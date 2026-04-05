@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use super::util::duration_from_secs_safe;
+use super::util::{combined_output, duration_from_secs_safe, truncate};
 use super::{
     ConfidenceScore, DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus,
     TestSuite,
@@ -67,8 +67,13 @@ impl TestAdapter for ZigAdapter {
         Ok(cmd)
     }
 
+    fn filter_args(&self, pattern: &str) -> Vec<String> {
+        // zig test uses --test-filter
+        vec!["--test-filter".to_string(), pattern.to_string()]
+    }
+
     fn parse_output(&self, stdout: &str, stderr: &str, exit_code: i32) -> TestRunResult {
-        let combined = format!("{}\n{}", stdout, stderr);
+        let combined = combined_output(stdout, stderr);
 
         let mut suites = parse_zig_output(&combined, exit_code);
 
@@ -317,7 +322,7 @@ fn parse_zig_failures(output: &str) -> Vec<ZigTestFailure> {
 
             failures.push(ZigTestFailure {
                 test_name,
-                message: truncate_zig_message(&message, 500),
+                message: truncate(&message, 500),
                 location,
             });
             continue;
@@ -328,7 +333,7 @@ fn parse_zig_failures(output: &str) -> Vec<ZigTestFailure> {
             let (location, message) = parse_zig_compile_error(trimmed);
             failures.push(ZigTestFailure {
                 test_name: "compile_error".into(),
-                message: truncate_zig_message(&message, 500),
+                message: truncate(&message, 500),
                 location: Some(location),
             });
         }
@@ -355,7 +360,7 @@ fn parse_zig_failures(output: &str) -> Vec<ZigTestFailure> {
 
             failures.push(ZigTestFailure {
                 test_name: "panic".into(),
-                message: truncate_zig_message(&message, 500),
+                message: truncate(&message, 500),
                 location,
             });
         }
@@ -456,15 +461,6 @@ fn parse_zig_compile_error(line: &str) -> (String, String) {
         (location, message)
     } else {
         (line.to_string(), "compile error".to_string())
-    }
-}
-
-/// Truncate a message.
-fn truncate_zig_message(msg: &str, max_len: usize) -> String {
-    if msg.len() <= max_len {
-        msg.to_string()
-    } else {
-        format!("{}...", &msg[..max_len])
     }
 }
 
@@ -737,10 +733,10 @@ thread 12345 panic: integer overflow
     }
 
     #[test]
-    fn truncate_zig_message_test() {
-        assert_eq!(truncate_zig_message("short", 100), "short");
+    fn truncate_test() {
+        assert_eq!(truncate("short", 100), "short");
         let long = "z".repeat(600);
-        let truncated = truncate_zig_message(&long, 500);
+        let truncated = truncate(&long, 500);
         assert!(truncated.ends_with("..."));
     }
 

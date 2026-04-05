@@ -94,6 +94,10 @@ fn parse_coverage_line(line: &str) -> Option<CoverageBlock> {
     let start_line: usize = start.split('.').next()?.parse().ok()?;
     let end_line: usize = end.split('.').next()?.parse().ok()?;
 
+    if start_line > end_line {
+        return None;
+    }
+
     Some(CoverageBlock {
         file: file.to_string(),
         start_line,

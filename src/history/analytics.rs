@@ -328,10 +328,14 @@ fn score_bar(score: f64) -> String {
 
 /// Truncate a test name to max characters.
 fn truncate_name(name: &str, max: usize) -> String {
+    if max == 0 {
+        return String::new();
+    }
     if name.len() <= max {
         name.to_string()
     } else {
-        format!("…{}", &name[name.len() - max + 1..])
+        let start = name.ceil_char_boundary(name.len().saturating_sub(max - 1));
+        format!("…{}", &name[start..])
     }
 }
 

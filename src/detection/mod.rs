@@ -63,6 +63,13 @@ impl DetectionEngine {
                         detection: result,
                         adapter_index: i,
                     });
+                    // Early exit on very high confidence — no need to scan remaining adapters
+                    if best
+                        .as_ref()
+                        .is_some_and(|b| b.detection.confidence >= 0.95)
+                    {
+                        break;
+                    }
                 }
             }
         }

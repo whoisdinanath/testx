@@ -42,7 +42,7 @@ pub fn parse_jacoco(content: &str) -> CoverageResult {
         // Track package
         if trimmed.starts_with("<package ") {
             if let Some(name) = extract_attr_value(trimmed, "name") {
-                current_package = Some(name.replace('/', std::path::MAIN_SEPARATOR_STR));
+                current_package = Some(name.to_string());
             }
         } else if trimmed == "</package>" {
             current_package = None;

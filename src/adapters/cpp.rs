@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use super::util::duration_from_secs_safe;
+use super::util::{combined_output, duration_from_secs_safe, has_marker_in_subdirs, truncate};
 use super::{
     ConfidenceScore, DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus,
     TestSuite,
@@ -30,6 +30,13 @@ impl CppAdapter {
             return Some("cmake");
         }
         if project_dir.join("meson.build").exists() {
+            return Some("meson");
+        }
+        // Fallback: check subdirectories for build files
+        if has_marker_in_subdirs(project_dir, 1, |name| name == "CMakeLists.txt") {
+            return Some("cmake");
+        }
+        if has_marker_in_subdirs(project_dir, 1, |name| name == "meson.build") {
             return Some("meson");
         }
         None
@@ -123,8 +130,13 @@ impl TestAdapter for CppAdapter {
         Ok(cmd)
     }
 
+    fn filter_args(&self, pattern: &str) -> Vec<String> {
+        // CTest uses -R for regex filter
+        vec!["-R".to_string(), pattern.to_string()]
+    }
+
     fn parse_output(&self, stdout: &str, stderr: &str, exit_code: i32) -> TestRunResult {
-        let combined = format!("{}\n{}", stdout, stderr);
+        let combined = combined_output(stdout, stderr);
 
         let mut suites = parse_ctest_output(&combined, exit_code);
 
@@ -388,7 +400,7 @@ fn parse_ctest_failures(output: &str) -> Vec<CTestFailure> {
             if !output_lines.is_empty() {
                 failures.push(CTestFailure {
                     test_name: test_name.clone(),
-                    output: truncate_output(&output_lines.join("\n"), 800),
+                    output: truncate(&output_lines.join("\n"), 800),
                     error_line,
                 });
             }
@@ -428,15 +440,6 @@ fn is_cpp_error_line(line: &str) -> bool {
         || lower.contains("sigsegv")
         || lower.contains("sigabrt")
         || lower.contains("abort")
-}
-
-/// Truncate output to max length.
-fn truncate_output(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max_len])
-    }
 }
 
 /// Enrich test cases with CTest failure details.
@@ -951,10 +954,10 @@ test_edge.cpp:42: Failure
     }
 
     #[test]
-    fn truncate_output_test() {
-        assert_eq!(truncate_output("short", 100), "short");
+    fn truncate_test() {
+        assert_eq!(truncate("short", 100), "short");
         let long = "x".repeat(1000);
-        let truncated = truncate_output(&long, 800);
+        let truncated = truncate(&long, 800);
         assert!(truncated.ends_with("..."));
     }
 

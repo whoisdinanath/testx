@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use super::util::duration_from_secs_safe;
+use super::util::{combined_output, duration_from_secs_safe, truncate};
 use super::{
     ConfidenceScore, DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus,
     TestSuite,
@@ -145,8 +145,13 @@ impl TestAdapter for RubyAdapter {
         Ok(cmd)
     }
 
+    fn filter_args(&self, pattern: &str) -> Vec<String> {
+        // RSpec uses -e for example filter
+        vec!["-e".to_string(), pattern.to_string()]
+    }
+
     fn parse_output(&self, stdout: &str, stderr: &str, exit_code: i32) -> TestRunResult {
-        let combined = format!("{}\n{}", stdout, stderr);
+        let combined = combined_output(stdout, stderr);
 
         // Try verbose parsing first (--format documentation / --verbose)
         let suites = if combined.contains("example") || combined.contains("Example") {
@@ -894,7 +899,7 @@ fn enrich_with_errors(
                             .find(|f| f.name.contains(&test.name) || test.name.contains(&f.name))
                         {
                             test.error = Some(TestError {
-                                message: truncate_message(&failure.message, 500),
+                                message: truncate(&failure.message, 500),
                                 location: failure.location.clone(),
                             });
                         }
@@ -904,7 +909,7 @@ fn enrich_with_errors(
                             .find(|f| f.name == test.name || test.name.contains(&f.name))
                         {
                             test.error = Some(TestError {
-                                message: truncate_message(&failure.message, 500),
+                                message: truncate(&failure.message, 500),
                                 location: failure.location.clone(),
                             });
                         }
@@ -918,15 +923,6 @@ fn enrich_with_errors(
             }
         })
         .collect()
-}
-
-/// Truncate a message to max_len characters.
-fn truncate_message(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max_len])
-    }
 }
 
 #[cfg(test)]
@@ -1321,15 +1317,15 @@ ZeroDivisionError: divided by 0
     }
 
     #[test]
-    fn truncate_message_short() {
-        assert_eq!(truncate_message("hello", 10), "hello");
+    fn truncate_short() {
+        assert_eq!(truncate("hello", 10), "hello");
     }
 
     #[test]
-    fn truncate_message_long() {
+    fn truncate_long() {
         let long = "a".repeat(600);
-        let result = truncate_message(&long, 500);
-        assert_eq!(result.len(), 503); // 500 + "..."
+        let result = truncate(&long, 500);
+        assert_eq!(result.len(), 500);
         assert!(result.ends_with("..."));
     }
 

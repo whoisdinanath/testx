@@ -150,7 +150,13 @@ impl TestHistory {
             self.runs.drain(..excess);
         }
 
-        self.save()
+        // Save to disk; if it fails, roll back the in-memory change
+        if let Err(e) = self.save() {
+            self.runs.pop();
+            return Err(e);
+        }
+
+        Ok(())
     }
 
     /// Save history to disk.
@@ -230,8 +236,8 @@ impl TestHistory {
             let passes = results.iter().filter(|&&r| r).count();
             let pass_rate = passes as f64 / results.len() as f64;
 
-            // A test is flaky if it has a pass rate between max_pass_rate and (1 - max_pass_rate)
-            if pass_rate > 0.0 && pass_rate < max_pass_rate {
+            // A test is flaky if it has a pass rate between (1 - max_pass_rate) and max_pass_rate
+            if pass_rate > 0.0 && pass_rate < max_pass_rate && pass_rate > (1.0 - max_pass_rate) {
                 let recent: String = results
                     .iter()
                     .rev()

@@ -1,6 +1,6 @@
 [package]
 name = "testx-cli"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "One command. Any language. Beautiful tests."
 license = "MIT"
@@ -28,8 +28,10 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 which = "8.0.2"
 toml = "0.8"
-wait-timeout = "0.2"
-notify = { version = "7", default-features = false, features = ["macos_kqueue"] }
+notify = "7"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 assert_cmd = "2.0"
@@ -48,3 +50,15 @@ harness = false
 [[bench]]
 name = "output"
 harness = false
+
+# ── Build profiles ──────────────────────────────────────────
+[profile.dev]
+debug = 0                  # Skip debuginfo → ~15% faster link, smaller binary
+
+[profile.dev.package."*"]
+opt-level = 1              # Optimise deps (not your code) → faster runtime
+
+[profile.release]
+lto = "thin"               # Inter-crate optimisation
+strip = true               # Strip symbols automatically
+codegen-units = 1          # Better optimisation at cost of compile time

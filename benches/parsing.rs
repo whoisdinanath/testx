@@ -53,7 +53,7 @@ fn bench_parse_rust(c: &mut Criterion) {
 
     let engine = testx::detection::DetectionEngine::new();
     let adapters = engine.adapters();
-    let rust_adapter = adapters.iter().find(|a| a.name() == "cargo test").unwrap();
+    let rust_adapter = adapters.iter().find(|a| a.name() == "Rust").unwrap();
 
     let mut group = c.benchmark_group("parse_rust");
     group.bench_function("10_tests", |b| {
@@ -75,7 +75,7 @@ fn bench_parse_go(c: &mut Criterion) {
 
     let engine = testx::detection::DetectionEngine::new();
     let adapters = engine.adapters();
-    let go_adapter = adapters.iter().find(|a| a.name() == "go test").unwrap();
+    let go_adapter = adapters.iter().find(|a| a.name() == "Go").unwrap();
 
     let mut group = c.benchmark_group("parse_go");
     group.bench_function("10_tests", |b| {
@@ -97,7 +97,7 @@ fn bench_parse_pytest(c: &mut Criterion) {
 
     let engine = testx::detection::DetectionEngine::new();
     let adapters = engine.adapters();
-    let py_adapter = adapters.iter().find(|a| a.name() == "pytest").unwrap();
+    let py_adapter = adapters.iter().find(|a| a.name() == "Python").unwrap();
 
     let mut group = c.benchmark_group("parse_pytest");
     group.bench_function("10_tests", |b| {

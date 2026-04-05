@@ -493,4 +493,310 @@ mod tests {
         assert_eq!(mgr.errors().len(), 1);
         assert!(mgr.errors()[0].message.contains("on_result"));
     }
+
+    // ─── Edge Case Tests ────────────────────────────────────────────────
+
+    #[test]
+    fn manager_dispatch_event_to_empty() {
+        let mut mgr = PluginManager::new();
+        mgr.dispatch_event(&TestEvent::Warning {
+            message: "test".into(),
+        });
+        assert!(mgr.errors().is_empty());
+    }
+
+    #[test]
+    fn manager_dispatch_result_to_empty() {
+        let mut mgr = PluginManager::new();
+        mgr.dispatch_result(&make_result());
+        assert!(mgr.errors().is_empty());
+    }
+
+    #[test]
+    fn manager_shutdown_empty() {
+        let mut mgr = PluginManager::new();
+        mgr.shutdown_all();
+        assert!(mgr.errors().is_empty());
+    }
+
+    #[test]
+    fn manager_failing_plugin_does_not_block_others() {
+        let mut mgr = PluginManager::new();
+        mgr.register(Box::new(MockPlugin::failing("bad")));
+        mgr.register(Box::new(MockPlugin::new("good")));
+
+        mgr.dispatch_result(&make_result());
+        // Bad plugin errors, good plugin still gets the result
+        assert_eq!(mgr.errors().len(), 1);
+        assert_eq!(mgr.errors()[0].plugin_name, "bad");
+        // Manager still has both plugins
+        assert_eq!(mgr.plugin_count(), 2);
+    }
+
+    #[test]
+    fn manager_multiple_failing_plugins() {
+        let mut mgr = PluginManager::new();
+        mgr.register(Box::new(MockPlugin::failing("bad1")));
+        mgr.register(Box::new(MockPlugin::failing("bad2")));
+        mgr.register(Box::new(MockPlugin::new("good")));
+
+        mgr.dispatch_event(&TestEvent::Warning {
+            message: "x".into(),
+        });
+        assert_eq!(mgr.errors().len(), 2);
+        assert_eq!(mgr.errors()[0].plugin_name, "bad1");
+        assert_eq!(mgr.errors()[1].plugin_name, "bad2");
+    }
+
+    #[test]
+    fn manager_errors_accumulate_across_dispatches() {
+        let mut mgr = PluginManager::new();
+        mgr.register(Box::new(MockPlugin::failing("bad")));
+
+        mgr.dispatch_event(&TestEvent::Warning {
+            message: "1".into(),
+        });
+        mgr.dispatch_event(&TestEvent::Warning {
+            message: "2".into(),
+        });
+        mgr.dispatch_result(&make_result());
+
+        assert_eq!(mgr.errors().len(), 3);
+    }
+
+    #[test]
+    fn manager_clear_errors_then_new_errors() {
+        let mut mgr = PluginManager::new();
+        mgr.register(Box::new(MockPlugin::failing("bad")));
+
+        mgr.dispatch_event(&TestEvent::Warning {
+            message: "x".into(),
+        });
+        assert_eq!(mgr.errors().len(), 1);
+
+        mgr.clear_errors();
+        assert!(mgr.errors().is_empty());
+
+        mgr.dispatch_event(&TestEvent::Warning {
+            message: "y".into(),
+        });
+        assert_eq!(mgr.errors().len(), 1);
+    }
+
+    #[test]
+    fn manager_remove_all_plugins() {
+        let mut mgr = PluginManager::new();
+        mgr.register(Box::new(MockPlugin::new("a")));
+        mgr.register(Box::new(MockPlugin::new("b")));
+
+        assert!(mgr.remove("a"));
+        assert!(mgr.remove("b"));
+        assert_eq!(mgr.plugin_count(), 0);
+        assert!(!mgr.remove("a")); // already removed
+    }
+
+    #[test]
+    fn manager_register_duplicate_names() {
+        let mut mgr = PluginManager::new();
+        mgr.register(Box::new(MockPlugin::new("dup")));
+        mgr.register(Box::new(MockPlugin::new("dup")));
+        assert_eq!(mgr.plugin_count(), 2);
+        assert_eq!(mgr.plugin_names(), vec!["dup", "dup"]);
+
+        // Remove removes ALL with that name
+        assert!(mgr.remove("dup"));
+        assert_eq!(mgr.plugin_count(), 0);
+    }
+
+    #[test]
+    fn manager_default_trait() {
+        let mgr = PluginManager::default();
+        assert_eq!(mgr.plugin_count(), 0);
+    }
+
+    #[test]
+    fn manager_has_fatal_error_with_non_fatal_errors() {
+        let mut mgr = PluginManager::new();
+        mgr.register(Box::new(MockPlugin::failing("bad")));
+        mgr.dispatch_event(&TestEvent::Warning {
+            message: "x".into(),
+        });
+        assert!(!mgr.has_fatal_error()); // PluginError from mock is non-fatal
+    }
+
+    #[test]
+    fn plugin_error_non_fatal_display() {
+        let err = PluginError::new("plug", "oops".into(), false);
+        let display = format!("{err}");
+        assert_eq!(display, "[plugin:plug] oops");
+        assert!(!display.contains("fatal"));
+    }
+
+    #[test]
+    fn plugin_error_fatal_display() {
+        let err = PluginError::new("plug", "critical".into(), true);
+        let display = format!("{err}");
+        assert!(display.contains("(fatal)"));
+        assert!(display.contains("critical"));
+    }
+
+    #[test]
+    fn plugin_error_clone() {
+        let err = PluginError::new("test", "msg".into(), true);
+        let cloned = err.clone();
+        assert_eq!(cloned.plugin_name, "test");
+        assert_eq!(cloned.message, "msg");
+        assert!(cloned.fatal);
+    }
+
+    #[test]
+    fn plugin_error_debug() {
+        let err = PluginError::new("test", "msg".into(), false);
+        let debug = format!("{err:?}");
+        assert!(debug.contains("test"));
+        assert!(debug.contains("msg"));
+    }
+
+    #[test]
+    fn registry_empty() {
+        let registry = PluginRegistry::new();
+        assert!(registry.list_available().is_empty());
+        assert!(registry.find("anything").is_none());
+    }
+
+    #[test]
+    fn registry_default_trait() {
+        let registry = PluginRegistry::default();
+        assert!(registry.list_available().is_empty());
+    }
+
+    #[test]
+    fn registry_builtin_count_and_names() {
+        let registry = PluginRegistry::builtin();
+        let names: Vec<&str> = registry
+            .list_available()
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect();
+        assert_eq!(names.len(), 4);
+        assert!(names.contains(&"markdown"));
+        assert!(names.contains(&"github"));
+        assert!(names.contains(&"html"));
+        assert!(names.contains(&"notify"));
+    }
+
+    #[test]
+    fn registry_builtin_versions() {
+        let registry = PluginRegistry::builtin();
+        for info in registry.list_available() {
+            assert_eq!(info.version, "1.0.0");
+            assert!(!info.description.is_empty());
+        }
+    }
+
+    #[test]
+    fn registry_multiple_custom() {
+        let mut registry = PluginRegistry::new();
+        registry.register_available(PluginInfo::new("a", "0.1", "Plugin A"));
+        registry.register_available(PluginInfo::new("b", "0.2", "Plugin B"));
+        assert_eq!(registry.list_available().len(), 2);
+        assert_eq!(registry.find("a").unwrap().version, "0.1");
+        assert_eq!(registry.find("b").unwrap().version, "0.2");
+    }
+
+    #[test]
+    fn manager_dispatch_all_event_types() {
+        let mut mgr = PluginManager::new();
+        mgr.register(Box::new(MockPlugin::new("p1")));
+
+        let events = vec![
+            TestEvent::RunStarted {
+                adapter: "rust".into(),
+                framework: "cargo test".into(),
+                project_dir: std::path::PathBuf::from("/tmp"),
+            },
+            TestEvent::SuiteStarted {
+                name: "math".into(),
+            },
+            TestEvent::TestStarted {
+                suite: "math".into(),
+                name: "add".into(),
+            },
+            TestEvent::TestFinished {
+                suite: "math".into(),
+                test: TestCase {
+                    name: "add".into(),
+                    status: TestStatus::Passed,
+                    duration: Duration::from_millis(1),
+                    error: None,
+                },
+            },
+            TestEvent::SuiteFinished {
+                suite: TestSuite {
+                    name: "math".into(),
+                    tests: vec![],
+                },
+            },
+            TestEvent::RunFinished {
+                result: make_result(),
+            },
+            TestEvent::Warning {
+                message: "warn".into(),
+            },
+            TestEvent::Progress {
+                message: "step".into(),
+                current: 1,
+                total: 10,
+            },
+        ];
+
+        for event in &events {
+            mgr.dispatch_event(event);
+        }
+        assert!(mgr.errors().is_empty());
+    }
+
+    #[test]
+    fn manager_dispatch_result_with_empty_result() {
+        let mut mgr = PluginManager::new();
+        mgr.register(Box::new(MockPlugin::new("p")));
+
+        let empty_result = TestRunResult {
+            suites: vec![],
+            duration: Duration::ZERO,
+            raw_exit_code: 0,
+        };
+        mgr.dispatch_result(&empty_result);
+        assert!(mgr.errors().is_empty());
+    }
+
+    #[test]
+    fn manager_dispatch_result_with_large_result() {
+        let mut mgr = PluginManager::new();
+        mgr.register(Box::new(MockPlugin::new("p")));
+
+        let tests: Vec<TestCase> = (0..1000)
+            .map(|i| TestCase {
+                name: format!("test_{i}"),
+                status: if i % 10 == 0 {
+                    TestStatus::Failed
+                } else {
+                    TestStatus::Passed
+                },
+                duration: Duration::from_millis(i as u64),
+                error: None,
+            })
+            .collect();
+
+        let large_result = TestRunResult {
+            suites: vec![TestSuite {
+                name: "big".into(),
+                tests,
+            }],
+            duration: Duration::from_secs(60),
+            raw_exit_code: 1,
+        };
+        mgr.dispatch_result(&large_result);
+        assert!(mgr.errors().is_empty());
+    }
 }

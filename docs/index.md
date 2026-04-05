@@ -21,8 +21,10 @@ testx · Python (pytest)
 
 - **Zero config** — just run `testx` in any project
 - **11 languages** — Rust, Go, Python, JS/TS, Java, C/C++, Ruby, Elixir, PHP, .NET, Zig
+- **Monorepo support** — scan and test all projects with `testx workspace`
 - **CI-ready** — sharding, caching, impact analysis, JUnit/JSON/TAP output
 - **Flaky test detection** — stress test mode runs N times and reports pass rates
+- **Test analytics** — history tracking with health scores, flaky detection, slowest tests
 - **Fast** — smart caching skips re-runs when nothing changed
 
 ## Quick example
@@ -42,6 +44,12 @@ testx stress -n 20
 
 # Fuzzy-pick tests to run
 testx pick
+
+# Test all projects in a monorepo
+testx workspace
+
+# View test health dashboard
+testx history health
 ```
 
 ## Getting started

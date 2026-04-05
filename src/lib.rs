@@ -7,6 +7,7 @@ pub mod detection;
 pub mod error;
 pub mod events;
 pub mod filter;
+pub mod hash;
 pub mod history;
 pub mod impact;
 pub mod output;
