@@ -10,24 +10,25 @@ If no command is given, `run` is used by default.
 
 ## Commands
 
-| Command               | Description                             |
-| --------------------- | --------------------------------------- |
-| `run [-- ARGS]`       | Run tests (default)                     |
-| `detect`              | Detect frameworks without running tests |
-| `list`                | List all supported adapters             |
-| `init`                | Generate a `testx.toml` config file     |
-| `completions <SHELL>` | Generate shell completions              |
-| `stress`              | Run tests N times to find flaky tests   |
-| `impact`              | Analyze test impact from git changes    |
-| `pick [-- ARGS]`      | Interactive fuzzy test picker           |
-| `cache-clear`         | Clear the smart test cache              |
+| Command               | Description                                     |
+| --------------------- | ----------------------------------------------- |
+| `run [-- ARGS]`       | Run tests (default)                             |
+| `detect`              | Detect frameworks without running tests         |
+| `list`                | List all supported adapters                     |
+| `adapters`            | List and manage custom adapters                 |
+| `init`                | Generate a `testx.toml` config file             |
+| `completions <SHELL>` | Generate shell completions                      |
+| `stress`              | Run tests N times to find flaky tests           |
+| `impact`              | Analyze test impact from git changes            |
+| `pick [-- ARGS]`      | Interactive fuzzy test picker                   |
+| `cache-clear`         | Clear the smart test cache                      |
 | `workspace`           | Scan monorepo and run tests across all projects |
 | `history`             | Show test history, trends, and flaky analytics  |
 
 ## Global options
 
 | Flag          | Short | Type    | Default  | Description                                                                      |
-| ------------- | ----- | ------- | -------- | -------------------------------------------------------------------------------- |
+| ------------- | ----- | ------- | -------- | -------------------------------------------------------------------------------- | --- | ---------------------- | --- | --- | --- | --------------------------------------------------------- |
 | `--path`      | `-p`  | PATH    | `.`      | Project directory                                                                |
 | `--output`    | `-o`  | FORMAT  | `pretty` | Output format: `pretty`, `json`, `junit`, `tap`                                  |
 | `--slowest`   |       | N       | —        | Show N slowest tests                                                             |
@@ -39,15 +40,29 @@ If no command is given, `run` is used by default.
 | `--cache`     |       | —       | —        | Skip re-running if nothing changed                                               |
 | `--watch`     | `-w`  | —       | —        | Watch mode — re-run tests on file changes                                        |
 | `--retries`   |       | N       | —        | Retry failed tests N times before reporting failure                              |
-| `--reporter`  |       | STRING  | —        | Activate a reporter plugin: `github`, `markdown`, `html`, `notify`               |
+| `--reporter`  |       | STRING  | —        | Activate a reporter plugin: `github`, `markdown`, `html`, `notify`               |     | `--no-custom-adapters` |     | —   | —   | Disable custom adapters from testx.toml and global config |
+| `--jobs`      | `-j`  | N       | —        | Number of parallel jobs (0 = auto-detect CPUs)                                   |
+
+## Run options
+
+| Flag          | Short | Type    | Default | Description                                                     |
+| ------------- | ----- | ------- | ------- | --------------------------------------------------------------- |
+| `--filter`    | `-f`  | PATTERN | —       | Filter tests by name pattern (supports glob: `*foo*`, `test_*`) |
+| `--exclude`   |       | PATTERN | —       | Exclude tests matching pattern                                  |
+| `--fail-fast` |       | —       | —       | Stop on first failure                                           |
+| `--coverage`  |       | —       | —       | Enable code coverage collection                                 |
+| `-- [ARGS]`   |       | —       | —       | Extra args passed to the test runner                            |
 
 ## Stress options
 
-| Flag             | Short | Type    | Default | Description            |
-| ---------------- | ----- | ------- | ------- | ---------------------- |
-| `-n`, `--count`  | `-n`  | N       | `10`    | Number of iterations   |
-| `--fail-fast`    |       | —       | —       | Stop on first failure  |
-| `--max-duration` |       | SECONDS | —       | Maximum total duration |
+| Flag                | Short | Type    | Default | Description                                                         |
+| ------------------- | ----- | ------- | ------- | ------------------------------------------------------------------- |
+| `-n`, `--count`     | `-n`  | N       | `10`    | Number of iterations                                                |
+| `--fail-fast`       |       | —       | —       | Stop on first failure                                               |
+| `--max-duration`    |       | SECONDS | —       | Maximum total duration                                              |
+| `--threshold`       |       | FLOAT   | —       | Minimum pass rate (0.0–1.0). Exit 1 if any flaky test is below this |
+| `--parallel-stress` |       | N       | `0`     | Number of parallel stress workers (0 = sequential)                  |
+| `-- [ARGS]`         |       | —       | —       | Extra args passed to the test runner                                |
 
 ## Impact options
 
@@ -57,22 +72,22 @@ If no command is given, `run` is used by default.
 
 ## Workspace options
 
-| Flag             | Short | Type    | Default | Description                                                         |
-| ---------------- | ----- | ------- | ------- | ------------------------------------------------------------------- |
-| `--max-depth`    |       | N       | `5`     | Maximum directory depth to scan (0 = unlimited)                     |
-| `--jobs`         | `-j`  | N       | `0`     | Maximum parallel jobs (0 = auto-detect CPUs)                        |
-| `--sequential`   |       | —       | —       | Run projects sequentially instead of in parallel                    |
-| `--fail-fast`    |       | —       | —       | Stop on first project failure                                       |
-| `--filter`       |       | STRING  | —       | Filter to specific languages (comma-separated, e.g., "rust,python") |
-| `--include`      |       | STRING  | —       | Include directories normally skipped (e.g., "packages,vendor")      |
-| `--list`         |       | —       | —       | Only list discovered projects, don't run tests                      |
+| Flag           | Short | Type   | Default | Description                                                         |
+| -------------- | ----- | ------ | ------- | ------------------------------------------------------------------- |
+| `--max-depth`  |       | N      | `5`     | Maximum directory depth to scan (0 = unlimited)                     |
+| `--jobs`       | `-j`  | N      | `0`     | Maximum parallel jobs (0 = auto-detect CPUs)                        |
+| `--sequential` |       | —      | —       | Run projects sequentially instead of in parallel                    |
+| `--fail-fast`  |       | —      | —       | Stop on first project failure                                       |
+| `--filter`     |       | STRING | —       | Filter to specific languages (comma-separated, e.g., "rust,python") |
+| `--include`    |       | STRING | —       | Include directories normally skipped (e.g., "packages,vendor")      |
+| `--list`       |       | —      | —       | Only list discovered projects, don't run tests                      |
 
 ## History options
 
-| Flag     | Type | Default   | Description                                             |
-| -------- | ---- | --------- | ------------------------------------------------------- |
-| `--last` | N    | `20`      | Number of recent runs to analyze                        |
-| view     | ENUM | `summary` | View: `summary`, `runs`, `flaky`, `slow`, `health`     |
+| Flag     | Type | Default   | Description                                        |
+| -------- | ---- | --------- | -------------------------------------------------- |
+| `--last` | N    | `20`      | Number of recent runs to analyze                   |
+| view     | ENUM | `summary` | View: `summary`, `runs`, `flaky`, `slow`, `health` |
 
 ## Shell completions
 

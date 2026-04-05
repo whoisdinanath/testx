@@ -869,7 +869,10 @@ mod tests {
         let config = WorkspaceConfig::default();
         let projects = discover_projects(tmp.path(), &engine, &config);
         assert_eq!(projects.len(), 1);
-        assert_eq!(projects[0].path, tmp.path().canonicalize().unwrap());
+        // Compare using the original (non-canonicalized) path since discover_projects
+        // stores dir.to_path_buf(). Canonicalize differs across platforms:
+        // macOS: /var -> /private/var, Windows: short paths vs UNC paths.
+        assert_eq!(projects[0].path, tmp.path().to_path_buf());
     }
 
     #[test]

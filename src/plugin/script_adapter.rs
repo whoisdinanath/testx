@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::adapters::util::duration_from_secs_safe;
-use crate::adapters::{TestCase, TestError, TestRunResult, TestStatus, TestSuite};
+use crate::adapters::{
+    DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus, TestSuite,
+};
 
 /// Output parser type for a script adapter.
 #[derive(Debug, Clone, PartialEq)]
@@ -156,13 +158,247 @@ impl ScriptAdapterConfig {
     }
 }
 
+// ─── ScriptTestAdapter ──────────────────────────────────────────────────
+
+/// A custom adapter that wraps `ScriptAdapterConfig` and implements the
+/// `TestAdapter` trait, allowing it to participate in the detection engine
+/// alongside built-in adapters.
+pub struct ScriptTestAdapter {
+    config: ScriptAdapterConfig,
+    /// Base confidence score (0.0–1.0) when detection succeeds
+    confidence: f32,
+    /// Optional command to verify the runner is installed
+    check_command: Option<String>,
+    /// Whether this adapter was loaded from a global config
+    pub is_global: bool,
+    /// Source of this adapter definition (e.g., "testx.toml", "~/.config/testx/adapters/foo.toml")
+    pub source: String,
+    /// Enhanced detection config (content matching, command checks, env vars)
+    detect_config: Option<crate::config::CustomDetectConfig>,
+}
+
+impl ScriptTestAdapter {
+    /// Create a new adapter from a config.
+    pub fn new(config: ScriptAdapterConfig) -> Self {
+        Self {
+            config,
+            confidence: 0.5,
+            check_command: None,
+            is_global: false,
+            source: "testx.toml".to_string(),
+            detect_config: None,
+        }
+    }
+
+    /// Build a ScriptTestAdapter from a CustomAdapterConfig (the TOML representation).
+    pub fn from_custom_config(cfg: &crate::config::CustomAdapterConfig) -> Self {
+        // Map detect.files into ScriptAdapterConfig's detect_file / detect_pattern.
+        // The enhanced detect path (via detect_config) handles multi-file detection
+        // directly, so detect_file is only used as a basic fallback.
+        let detect_file = cfg.detect.files.first().cloned().unwrap_or_default();
+
+        // Map output parser string → OutputParser enum
+        let parser = parse_output_parser_str(&cfg.output);
+
+        // Map env HashMap → Vec<(String, String)>
+        let env: Vec<(String, String)> = cfg
+            .env
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
+        let script_config = ScriptAdapterConfig {
+            name: cfg.name.clone(),
+            detect_file,
+            detect_pattern: None,
+            command: cfg.command.clone(),
+            args: cfg.args.clone(),
+            parser,
+            working_dir: cfg.working_dir.clone(),
+            env,
+        };
+
+        Self {
+            config: script_config,
+            confidence: cfg.confidence.clamp(0.0, 1.0),
+            check_command: cfg.check.clone(),
+            is_global: false,
+            source: "testx.toml".to_string(),
+            detect_config: Some(cfg.detect.clone()),
+        }
+    }
+
+    /// Set the confidence score.
+    pub fn with_confidence(mut self, confidence: f32) -> Self {
+        self.confidence = confidence.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Set the check command.
+    pub fn with_check(mut self, check: Option<String>) -> Self {
+        self.check_command = check;
+        self
+    }
+
+    /// Set the source label.
+    pub fn with_source(mut self, source: &str) -> Self {
+        self.source = source.to_string();
+        self
+    }
+
+    /// Set the global flag.
+    pub fn with_global(mut self, is_global: bool) -> Self {
+        self.is_global = is_global;
+        self
+    }
+}
+
+/// Parse a parser name string into an OutputParser enum.
+fn parse_output_parser_str(s: &str) -> OutputParser {
+    match s.to_lowercase().as_str() {
+        "json" => OutputParser::Json,
+        "junit" | "junit-xml" | "junitxml" => OutputParser::Junit,
+        "tap" => OutputParser::Tap,
+        "lines" | "line" => OutputParser::Lines,
+        _ => OutputParser::Lines,
+    }
+}
+
+impl TestAdapter for ScriptTestAdapter {
+    fn name(&self) -> &str {
+        &self.config.name
+    }
+
+    fn detect(&self, project_dir: &Path) -> Option<DetectionResult> {
+        let detected = if let Some(ref dc) = self.detect_config {
+            // Enhanced detection: ALL configured checks must pass
+
+            // Check files (at least one must exist)
+            let mut pass = if !dc.files.is_empty() {
+                dc.files.iter().any(|f| project_dir.join(f).exists())
+            } else {
+                // Fall back to basic file detection
+                self.config.detect(project_dir)
+            };
+
+            // Check commands (must all succeed)
+            if pass && !dc.commands.is_empty() {
+                pass = dc.commands.iter().all(|cmd_str| {
+                    let parts: Vec<&str> = cmd_str.split_whitespace().collect();
+                    if parts.is_empty() {
+                        return false;
+                    }
+                    create_command(parts[0])
+                        .args(&parts[1..])
+                        .current_dir(project_dir)
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .status()
+                        .map(|s| s.success())
+                        .unwrap_or(false)
+                });
+            }
+
+            // Check environment variables (all must be set)
+            if pass && !dc.env_vars.is_empty() {
+                pass = dc.env_vars.iter().all(|var| std::env::var(var).is_ok());
+            }
+
+            // Check content matches (all must match)
+            if pass && !dc.content.is_empty() {
+                pass = dc.content.iter().all(|cm| {
+                    let file_path = project_dir.join(&cm.file);
+                    std::fs::read_to_string(file_path)
+                        .map(|content| content.contains(&cm.contains))
+                        .unwrap_or(false)
+                });
+            }
+
+            pass
+        } else {
+            // No enhanced config: use basic file detection only
+            self.config.detect(project_dir)
+        };
+
+        if detected {
+            Some(DetectionResult {
+                language: "Custom".to_string(),
+                framework: self.config.name.clone(),
+                confidence: self.confidence,
+            })
+        } else {
+            None
+        }
+    }
+
+    fn build_command(
+        &self,
+        project_dir: &Path,
+        extra_args: &[String],
+    ) -> anyhow::Result<std::process::Command> {
+        let working_dir = self.config.effective_working_dir(project_dir);
+
+        // Split command into program + args
+        let parts: Vec<&str> = self.config.command.split_whitespace().collect();
+        if parts.is_empty() {
+            anyhow::bail!("Custom adapter '{}' has empty command", self.config.name);
+        }
+
+        let mut cmd = create_command(parts[0]);
+        if parts.len() > 1 {
+            cmd.args(&parts[1..]);
+        }
+
+        // Add default adapter args
+        for arg in &self.config.args {
+            cmd.arg(arg);
+        }
+
+        // Add extra (user-provided) args
+        for arg in extra_args {
+            cmd.arg(arg);
+        }
+
+        cmd.current_dir(&working_dir);
+
+        // Set configured env vars
+        for (key, value) in &self.config.env {
+            cmd.env(key, value);
+        }
+
+        Ok(cmd)
+    }
+
+    fn parse_output(&self, stdout: &str, stderr: &str, exit_code: i32) -> TestRunResult {
+        parse_script_output(&self.config.parser, stdout, stderr, exit_code)
+    }
+
+    fn check_runner(&self) -> Option<String> {
+        let check_cmd = self.check_command.as_ref()?;
+        let parts: Vec<&str> = check_cmd.split_whitespace().collect();
+        if parts.is_empty() {
+            return None;
+        }
+
+        match create_command(parts[0])
+            .args(&parts[1..])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+        {
+            Ok(status) if status.success() => None,
+            _ => Some(parts[0].to_string()),
+        }
+    }
+}
+
 /// Simple glob detection — checks if any file matching the pattern exists.
 fn glob_detect(project_dir: &Path, pattern: &str) -> bool {
     // Simple implementation: check common patterns
     if pattern.contains('*') {
         // For now, just check if the non-glob part exists as a directory
         if let Some(base) = pattern.split('*').next() {
-            let base = base.trim_end_matches('/');
+            let base = base.trim_end_matches(['/', '\\']);
             if !base.is_empty() {
                 return project_dir.join(base).exists();
             }
@@ -171,6 +407,20 @@ fn glob_detect(project_dir: &Path, pattern: &str) -> bool {
         project_dir.join(pattern).exists()
     } else {
         project_dir.join(pattern).exists()
+    }
+}
+
+/// Create a `Command` from a program name, handling `.cmd`/`.bat` on Windows.
+fn create_command(program: &str) -> std::process::Command {
+    #[cfg(windows)]
+    {
+        let mut cmd = std::process::Command::new("cmd");
+        cmd.args(["/C", program]);
+        cmd
+    }
+    #[cfg(not(windows))]
+    {
+        std::process::Command::new(program)
     }
 }
 
@@ -1827,5 +2077,218 @@ mod tests {
         };
         let cloned = config.clone();
         assert_eq!(cloned, config);
+    }
+
+    // ─── ScriptTestAdapter tests ────────────────────────────────────
+
+    #[test]
+    fn script_test_adapter_detect_basic() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("BUILD"), "").unwrap();
+
+        let config = ScriptAdapterConfig::new("bazel", "BUILD", "bazel test //...");
+        let adapter = ScriptTestAdapter::new(config).with_confidence(0.7);
+
+        let result = adapter.detect(dir.path());
+        assert!(result.is_some());
+        let det = result.unwrap();
+        assert_eq!(det.language, "Custom");
+        assert_eq!(det.framework, "bazel");
+        assert!((det.confidence - 0.7).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn script_test_adapter_detect_no_match() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let config = ScriptAdapterConfig::new("bazel", "BUILD", "bazel test //...");
+        let adapter = ScriptTestAdapter::new(config);
+
+        assert!(adapter.detect(dir.path()).is_none());
+    }
+
+    #[test]
+    fn script_test_adapter_name() {
+        let config = ScriptAdapterConfig::new("my-runner", "test.config", "my-runner test");
+        let adapter = ScriptTestAdapter::new(config);
+        assert_eq!(adapter.name(), "my-runner");
+    }
+
+    #[test]
+    fn script_test_adapter_builder_methods() {
+        let config = ScriptAdapterConfig::new("test", "f", "cmd");
+        let adapter = ScriptTestAdapter::new(config)
+            .with_confidence(0.8)
+            .with_check(Some("cmd --version".into()))
+            .with_source("custom.toml")
+            .with_global(true);
+
+        assert_eq!(adapter.source, "custom.toml");
+        assert!(adapter.is_global);
+        assert!((adapter.confidence - 0.8).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn script_test_adapter_confidence_clamped() {
+        let config = ScriptAdapterConfig::new("test", "f", "cmd");
+        let adapter = ScriptTestAdapter::new(config).with_confidence(2.0);
+        assert!((adapter.confidence - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn script_test_adapter_parse_output() {
+        let config = ScriptAdapterConfig::new("test", "f", "cmd").with_parser(OutputParser::Lines);
+        let adapter = ScriptTestAdapter::new(config);
+
+        let result = adapter.parse_output("PASS test_one\nFAIL test_two", "", 1);
+        assert_eq!(result.total_tests(), 2);
+        assert_eq!(result.total_passed(), 1);
+        assert_eq!(result.total_failed(), 1);
+    }
+
+    #[test]
+    fn from_custom_config_basic() {
+        use crate::config::{CustomAdapterConfig, CustomDetectConfig};
+
+        let cfg = CustomAdapterConfig {
+            name: "bazel".into(),
+            detect: CustomDetectConfig {
+                files: vec!["BUILD".into()],
+                ..Default::default()
+            },
+            command: "bazel test //...".into(),
+            args: vec!["--test_output=all".into()],
+            output: "tap".into(),
+            confidence: 0.7,
+            check: Some("bazel --version".into()),
+            working_dir: None,
+            env: std::collections::HashMap::new(),
+        };
+
+        let adapter = ScriptTestAdapter::from_custom_config(&cfg);
+        assert_eq!(adapter.name(), "bazel");
+        assert!((adapter.confidence - 0.7).abs() < f32::EPSILON);
+        assert_eq!(adapter.config.parser, OutputParser::Tap);
+        assert_eq!(adapter.config.detect_file, "BUILD");
+        assert_eq!(adapter.config.args, vec!["--test_output=all"]);
+    }
+
+    #[test]
+    fn from_custom_config_with_env() {
+        use crate::config::{CustomAdapterConfig, CustomDetectConfig};
+
+        let mut env = std::collections::HashMap::new();
+        env.insert("FOO".into(), "bar".into());
+
+        let cfg = CustomAdapterConfig {
+            name: "runner".into(),
+            detect: CustomDetectConfig {
+                files: vec!["test.yml".into()],
+                ..Default::default()
+            },
+            command: "runner".into(),
+            args: vec![],
+            output: "json".into(),
+            confidence: 0.5,
+            check: None,
+            working_dir: Some("src".into()),
+            env,
+        };
+
+        let adapter = ScriptTestAdapter::from_custom_config(&cfg);
+        assert_eq!(adapter.config.parser, OutputParser::Json);
+        assert_eq!(adapter.config.working_dir, Some("src".into()));
+        assert_eq!(adapter.config.env.len(), 1);
+        assert_eq!(adapter.config.env[0], ("FOO".into(), "bar".into()));
+    }
+
+    #[test]
+    fn from_custom_config_enhanced_detection() {
+        use crate::config::{ContentMatch, CustomAdapterConfig, CustomDetectConfig};
+
+        let cfg = CustomAdapterConfig {
+            name: "custom".into(),
+            detect: CustomDetectConfig {
+                files: vec!["Makefile".into()],
+                content: vec![ContentMatch {
+                    file: "Makefile".into(),
+                    contains: "test:".into(),
+                }],
+                search_depth: 2,
+                ..Default::default()
+            },
+            command: "make test".into(),
+            args: vec![],
+            output: "lines".into(),
+            confidence: 0.6,
+            check: None,
+            working_dir: None,
+            env: std::collections::HashMap::new(),
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Makefile"), "test:\n\techo ok").unwrap();
+
+        let adapter = ScriptTestAdapter::from_custom_config(&cfg);
+        let result = adapter.detect(dir.path());
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn from_custom_config_content_no_match() {
+        use crate::config::{ContentMatch, CustomAdapterConfig, CustomDetectConfig};
+
+        let cfg = CustomAdapterConfig {
+            name: "custom".into(),
+            detect: CustomDetectConfig {
+                files: vec!["Makefile".into()],
+                content: vec![ContentMatch {
+                    file: "Makefile".into(),
+                    contains: "test:".into(),
+                }],
+                ..Default::default()
+            },
+            command: "make test".into(),
+            args: vec![],
+            output: "lines".into(),
+            confidence: 0.6,
+            check: None,
+            working_dir: None,
+            env: std::collections::HashMap::new(),
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        // Makefile exists but doesn't contain "test:"
+        std::fs::write(dir.path().join("Makefile"), "build:\n\tcc main.c").unwrap();
+
+        let adapter = ScriptTestAdapter::from_custom_config(&cfg);
+        let result = adapter.detect(dir.path());
+        // File detected but content doesn't match → should not detect
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn parse_output_parser_str_variants() {
+        assert_eq!(parse_output_parser_str("json"), OutputParser::Json);
+        assert_eq!(parse_output_parser_str("JSON"), OutputParser::Json);
+        assert_eq!(parse_output_parser_str("junit"), OutputParser::Junit);
+        assert_eq!(parse_output_parser_str("junit-xml"), OutputParser::Junit);
+        assert_eq!(parse_output_parser_str("tap"), OutputParser::Tap);
+        assert_eq!(parse_output_parser_str("lines"), OutputParser::Lines);
+        assert_eq!(parse_output_parser_str("line"), OutputParser::Lines);
+        assert_eq!(parse_output_parser_str("unknown"), OutputParser::Lines);
+    }
+
+    #[test]
+    fn script_test_adapter_registers_in_engine() {
+        use crate::detection::DetectionEngine;
+
+        let mut engine = DetectionEngine::new();
+        let initial = engine.adapters().len();
+
+        let config = ScriptAdapterConfig::new("custom", "test.cfg", "runner");
+        engine.register(Box::new(ScriptTestAdapter::new(config)));
+
+        assert_eq!(engine.adapters().len(), initial + 1);
     }
 }

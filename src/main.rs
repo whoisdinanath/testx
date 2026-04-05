@@ -87,6 +87,10 @@ struct Cli {
     #[arg(long, global = true)]
     reporter: Option<ReporterKind>,
 
+    /// Disable custom adapters defined in testx.toml or global config
+    #[arg(long, global = true)]
+    no_custom_adapters: bool,
+
     /// Extra arguments to pass through to the underlying test runner (after --)
     #[arg(last = true)]
     args: Vec<String>,
@@ -195,6 +199,8 @@ enum Commands {
         #[arg(short, long, default_value = "20")]
         last: usize,
     },
+    /// List and manage custom adapters
+    Adapters,
 }
 
 #[derive(ValueEnum, Clone, Default)]
@@ -231,7 +237,12 @@ fn run(cli: Cli) -> Result<()> {
         .canonicalize()
         .context("Failed to resolve project directory")?;
 
-    let engine = detection::DetectionEngine::new();
+    let mut engine = detection::DetectionEngine::new();
+
+    // --- Register custom adapters ---
+    if !cli.no_custom_adapters {
+        register_custom_adapters(&mut engine, &project_dir, cli.verbose);
+    }
 
     match cli.command.unwrap_or(Commands::Run {
         args: vec![],
@@ -251,6 +262,67 @@ fn run(cli: Cli) -> Result<()> {
             for adapter in engine.adapters() {
                 println!("  {} {}", "▸".bold(), adapter.name());
             }
+            println!();
+            Ok(())
+        }
+
+        Commands::Adapters => {
+            let config = Config::load(&project_dir);
+
+            // Show built-in adapters
+            println!("{}", "Built-in adapters:".bold());
+            println!();
+            let builtin_count = detection::DetectionEngine::BUILTIN_COUNT;
+            for adapter in engine.adapters().iter().take(builtin_count) {
+                println!("  {} {}", "▸".bold(), adapter.name());
+            }
+
+            // Show project-local custom adapters
+            if let Some(ref customs) = config.custom_adapter {
+                println!();
+                println!("{}", "Custom adapters (testx.toml):".bold());
+                println!();
+                for c in customs {
+                    let detect_desc = if !c.detect.files.is_empty() {
+                        c.detect.files.join(", ")
+                    } else {
+                        "custom detection".into()
+                    };
+                    println!(
+                        "  {} {} {} confidence: {:.0}% | detect: {}",
+                        "▸".bold().cyan(),
+                        c.name.bold(),
+                        format!("({})", c.command).dimmed(),
+                        c.confidence * 100.0,
+                        detect_desc.dimmed(),
+                    );
+                }
+            }
+
+            // Show global custom adapters
+            let global_adapters = load_global_adapter_configs();
+            if !global_adapters.is_empty() {
+                println!();
+                println!("{}", "Global adapters (user config):".bold());
+                println!();
+                for (c, source) in &global_adapters {
+                    let detect_desc = if !c.detect.files.is_empty() {
+                        c.detect.files.join(", ")
+                    } else {
+                        "custom detection".into()
+                    };
+                    println!(
+                        "  {} {} {} confidence: {:.0}% | source: {} | detect: {}",
+                        "▸".bold().magenta(),
+                        c.name.bold(),
+                        format!("({})", c.command).dimmed(),
+                        c.confidence * 100.0,
+                        source.dimmed(),
+                        detect_desc.dimmed(),
+                    );
+                }
+            }
+
             println!();
             Ok(())
         }
@@ -744,7 +816,15 @@ args = []
                 anyhow::bail!("stress test threshold not met");
             }
             if !report.all_passed {
-                anyhow::bail!("stress test failed");
+                if !report.flaky_tests.is_empty() {
+                    anyhow::bail!(
+                        "flaky tests detected ({} flaky across {} iterations)",
+                        report.flaky_tests.len(),
+                        report.iterations_completed
+                    );
+                } else {
+                    anyhow::bail!("stress test failed, tests failing consistently");
+                }
             }
             Ok(())
         }
@@ -1619,4 +1699,118 @@ fn execute_with_timeout(
             output.status.code().unwrap_or(1),
         ))
     }
+}
+
+/// Register custom adapters from project-local config and global adapter files.
+fn register_custom_adapters(
+    engine: &mut detection::DetectionEngine,
+    project_dir: &std::path::Path,
+    verbose: bool,
+) {
+    use testx::plugin::script_adapter::ScriptTestAdapter;
+
+    // 1. Load global adapters from ~/.config/testx/adapters/*.toml
+    let global_adapters = load_global_adapter_configs();
+    for (cfg, source) in &global_adapters {
+        let adapter = ScriptTestAdapter::from_custom_config(cfg)
+            .with_source(source)
+            .with_global(true);
+        if verbose {
+            eprintln!(
+                "{} Registered global adapter: {} (from {})",
+                "▸".dimmed(),
+                cfg.name,
+                source
+            );
+        }
+        engine.register(Box::new(adapter));
+    }
+
+    // 2. Load project-local custom adapters from testx.toml
+    let config = Config::load(project_dir);
+    if let Some(customs) = &config.custom_adapter {
+        for cfg in customs {
+            let adapter = ScriptTestAdapter::from_custom_config(cfg);
+            if verbose {
+                eprintln!(
+                    "{} Registered custom adapter: {} (from testx.toml)",
+                    "▸".dimmed(),
+                    cfg.name,
+                );
+            }
+            engine.register(Box::new(adapter));
+        }
+    }
+}
+
+/// Load custom adapter definitions from global config directory.
+/// Returns list of (config, source_path) tuples.
+fn load_global_adapter_configs() -> Vec<(testx::config::CustomAdapterConfig, String)> {
+    let mut results = Vec::new();
+
+    // Support XDG_CONFIG_HOME or fallback to platform-appropriate config dir
+    let config_dir = std::env::var("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .ok()
+        .or_else(|| dirs_path().map(|h| h.join(".config")));
+
+    let config_dir = match config_dir {
+        Some(base) => base.join("testx").join("adapters"),
+        None => return results,
+    };
+
+    if !config_dir.is_dir() {
+        return results;
+    }
+
+    let entries = match std::fs::read_dir(&config_dir) {
+        Ok(entries) => entries,
+        Err(_) => return results,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("toml")
+            && let Ok(content) = std::fs::read_to_string(&path)
+        {
+            // Each file can define a single adapter or a list
+            // Try single adapter first (top-level fields)
+            if let Ok(cfg) = toml::from_str::<testx::config::CustomAdapterConfig>(&content) {
+                let source = path.display().to_string();
+                results.push((cfg, source));
+            }
+            // Or try as a wrapper with [[custom_adapter]] array
+            else if let Ok(wrapper) = toml::from_str::<GlobalAdapterFile>(&content) {
+                let source = path.display().to_string();
+                for cfg in wrapper.custom_adapter {
+                    results.push((cfg.clone(), source.clone()));
+                }
+            }
+        }
+    }
+
+    results
+}
+
+/// Wrapper for global adapter files that contain an array of custom adapters.
+#[derive(serde::Deserialize)]
+struct GlobalAdapterFile {
+    #[serde(default)]
+    custom_adapter: Vec<testx::config::CustomAdapterConfig>,
+}
+
+/// Get the user's home directory cross-platform.
+fn dirs_path() -> Option<PathBuf> {
+    // Try HOME (Unix/macOS, also set by some Windows shells)
+    std::env::var("HOME")
+        .ok()
+        .map(PathBuf::from)
+        // Try USERPROFILE (Windows standard)
+        .or_else(|| std::env::var("USERPROFILE").ok().map(PathBuf::from))
+        // Try HOMEDRIVE + HOMEPATH (Windows service accounts)
+        .or_else(|| {
+            let drive = std::env::var("HOMEDRIVE").ok()?;
+            let path = std::env::var("HOMEPATH").ok()?;
+            Some(PathBuf::from(format!("{}{}", drive, path)))
+        })
 }

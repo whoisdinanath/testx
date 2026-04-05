@@ -12,7 +12,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License"></a>
   <img src="https://img.shields.io/badge/rust-1.87+-orange?logo=rust" alt="Rust 1.87+">
   <img src="https://img.shields.io/badge/languages-11-blueviolet" alt="11 Languages">
-  <img src="https://img.shields.io/badge/tests-1137-brightgreen" alt="1137 Tests">
+  <img src="https://img.shields.io/badge/tests-1150-brightgreen" alt="1150 Tests">
 </p>
 
 **testx** is a universal test runner that auto-detects your project's language and framework, runs your tests, and displays clean, unified output. Zero configuration required.
@@ -50,7 +50,7 @@
 - **Retry logic** — Automatically retry failing tests
 - **Parallel execution** — Run multiple test suites concurrently
 - **Coverage integration** — LCOV, Cobertura, JaCoCo, Go coverage
-- **Plugin system** — Custom adapters, reporter plugins, shell hooks
+- **Plugin system** — Custom adapters (project-local and global), reporter plugins, shell hooks
 - **History tracking** — Track test health scores, flaky tests, and trends over time
 - **Monorepo support** — Scan and test all projects in a workspace with `testx workspace`
 
@@ -72,10 +72,22 @@
 
 ## Installation
 
-### From crates.io
+### From crates.io (recommended)
 
 ```bash
 cargo install testx-cli
+```
+
+### npm
+
+```bash
+npm install -g @whoisdinanath/testx
+```
+
+### Install script (macOS / Linux)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/whoisdinanath/testx/main/install.sh | sh
 ```
 
 ### From source
@@ -167,16 +179,28 @@ testx stress -n 50 --fail-fast
 
 # Cap total time at 60 seconds
 testx stress --max-duration 60
+
+# Require all tests to have ≥90% pass rate
+testx stress -n 20 --threshold 0.9
 ```
 
-Output:
+Output includes severity classification and timing statistics:
 
 ```
-Stress Test Report: 10/10 iterations in 5.23s
+Stress Test Report: 20/20 iterations in 15.16s
 
-  Flaky Tests Detected:
-    test_network_call (7/10 passed, 70.0% pass rate, avg 12ms)
+  Flaky tests detected (4):
+    🔴 [CRITICAL] timing_lock_acquisition (6/20 passed, 30.0% pass rate)
+    🟠 [HIGH]     network_timeout (12/20 passed, 60.0% pass rate)
+    🟡 [MEDIUM]   temp_dir_collision (16/20 passed, 80.0% pass rate)
+    🟢 [LOW]      rare_gc_pause (49/50 passed, 98.0% pass rate)
+
+  Timing Statistics:
+    Mean: 757.8ms | Median: 753.2ms | Std Dev: 89.9ms
+    P95: 892.0ms | P99: 906.8ms | CV: 0.12
 ```
+
+Severity levels: **Critical** (<50%), **High** (50–80%), **Medium** (80–95%), **Low** (>95%).
 
 ### Impact analysis
 
@@ -263,6 +287,11 @@ testx -v                 # Verbose (show detected command)
 testx -w                 # Watch mode — re-run on file changes
 testx --retries 3        # Retry failed tests 3 times
 testx --reporter github  # Activate GitHub Actions reporter
+testx --no-custom-adapters  # Disable custom adapter loading
+testx run --filter "auth*"  # Filter tests by name pattern
+testx run --exclude "*slow" # Exclude tests matching pattern
+testx run --fail-fast       # Stop on first failure
+testx run --coverage        # Enable code coverage
 ```
 
 ## Configuration
@@ -290,15 +319,56 @@ CLI flags always override config file values.
 
 ### Custom adapters
 
-Define custom test commands in `testx.toml`:
+Define custom test runners in `testx.toml`:
 
 ```toml
-[[adapters]]
+[[custom_adapter]]
 name = "my-framework"
-detect = ["my-config.json"]
+detect = "my-config.json"           # Simple: single file trigger
 command = "my-test-runner"
 args = ["--reporter", "json"]
-output_format = "json"
+output = "json"                     # json | junit | tap | lines
+confidence = 0.8
+check = "my-test-runner --version"   # Verify runner is installed
+```
+
+For advanced detection (multiple files, content matching, env vars):
+
+```toml
+[[custom_adapter]]
+name = "make-test"
+command = "make test"
+output = "lines"
+confidence = 0.85
+
+[custom_adapter.detect]
+files = ["Makefile", "test.mk"]
+commands = ["make --version"]
+env = ["CI"]
+search_depth = 2
+
+[[custom_adapter.detect.content]]
+file = "Makefile"
+contains = "test:"
+```
+
+### Global adapters
+
+Place adapter definitions in `~/.config/testx/adapters/*.toml` to make them available across all projects:
+
+```toml
+# ~/.config/testx/adapters/bazel.toml
+name = "bazel"
+detect = "BUILD"
+command = "bazel test //..."
+output = "tap"
+confidence = 0.7
+```
+
+### List adapters
+
+```bash
+testx adapters   # Show built-in, project, and global adapters
 ```
 
 ### Reporter plugins
@@ -321,7 +391,7 @@ cargo build --release
 ### Running the test suite
 
 ```bash
-cargo test            # Run all tests (1134 tests)
+cargo test            # Run all tests (1150 tests)
 cargo clippy          # Lint (0 warnings)
 cargo fmt --check     # Format check
 ```
@@ -330,15 +400,34 @@ cargo fmt --check     # Format check
 
 | Metric                | Value                                                |
 | --------------------- | ---------------------------------------------------- |
-| Languages supported   | 11                                                   |
+| Languages supported   | 11 built-in + custom adapters                        |
 | Test frameworks       | 20+                                                  |
-| Source lines          | ~34,700                                              |
-| Test count            | 1,134 (1,080 unit + 33 CLI + 21 integration)         |
-| Binary size (release) | 3.8 MB                                               |
-| Framework detection   | ~5ms                                                 |
+| Source lines          | ~36,000                                              |
+| Test count            | 1,150 (1,096 unit + 33 CLI + 21 integration)         |
+| Binary size (release) | ~2.2 MB                                              |
+| Framework detection   | < 200 µs                                             |
 | Rust source files     | 55                                                   |
 | Dependencies          | minimal (clap, serde, colored, toml, anyhow, notify) |
 | Clippy warnings       | 0                                                    |
+
+## Performance
+
+testx adds negligible overhead on top of your test runner:
+
+| Operation                         | Time      |
+| --------------------------------- | --------- |
+| Config loading (no file)          | ~1.4 µs   |
+| Config loading (with testx.toml)  | ~18 µs    |
+| Framework detection (single lang) | ~67–83 µs |
+| Framework detection (polyglot)    | ~149 µs   |
+| Detect + parse 100 tests (Rust)   | ~138 µs   |
+| Detect + parse 100 tests (Python) | ~161 µs   |
+| Detect + parse 100 tests (Go)     | ~173 µs   |
+| Parse 1,000 tests (Rust)          | ~570 µs   |
+| Parse 5,000 tests (Rust)          | ~3 ms     |
+| JSON serialization (1,000 tests)  | ~422 µs   |
+
+**Total testx overhead: < 1 ms** for typical projects. Run `cargo bench --bench overhead` to reproduce.
 
 ## Documentation
 

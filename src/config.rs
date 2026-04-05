@@ -128,19 +128,105 @@ pub struct AdapterConfig {
 pub struct CustomAdapterConfig {
     /// Name for the custom adapter
     pub name: String,
-    /// File whose presence triggers detection
-    pub detect: String,
+    /// Detection configuration
+    #[serde(default)]
+    pub detect: CustomDetectConfig,
     /// Command to run
     pub command: String,
     /// Default arguments
     #[serde(default)]
     pub args: Vec<String>,
-    /// Output parser: "json", "junit", "tap", "lines"
-    #[serde(default = "default_parser")]
-    pub parse: String,
+    /// Output parser: "json", "junit", "tap", "lines", "regex"
+    #[serde(default = "default_parser", alias = "parse")]
+    pub output: String,
     /// Detection confidence (0.0 to 1.0)
     #[serde(default = "default_confidence")]
     pub confidence: f32,
+    /// Verify runner is installed before executing
+    pub check: Option<String>,
+    /// Working directory relative to project root
+    pub working_dir: Option<String>,
+    /// Environment variables to set
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+}
+
+/// Detection configuration for custom adapters.
+///
+/// Supports two TOML forms:
+/// - Short: `detect = "Makefile"` (equivalent to `detect = { files = ["Makefile"] }`)
+/// - Full:  `[custom_adapter.detect]` with files, commands, env, content, search_depth
+#[derive(Debug, Clone, Default)]
+pub struct CustomDetectConfig {
+    /// File patterns whose presence triggers detection
+    pub files: Vec<String>,
+    /// Commands that must succeed (exit 0) for detection
+    pub commands: Vec<String>,
+    /// Environment variables that must be set
+    pub env_vars: Vec<String>,
+    /// File content matching rules
+    pub content: Vec<ContentMatch>,
+    /// Subdirectory search depth for markers (0 = root only)
+    pub search_depth: usize,
+}
+
+impl<'de> serde::Deserialize<'de> for CustomDetectConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de;
+
+        struct DetectVisitor;
+
+        impl<'de> de::Visitor<'de> for DetectVisitor {
+            type Value = CustomDetectConfig;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a string (file name) or a detect config table")
+            }
+
+            fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                Ok(CustomDetectConfig {
+                    files: vec![value.to_string()],
+                    ..Default::default()
+                })
+            }
+
+            fn visit_map<M: de::MapAccess<'de>>(self, map: M) -> Result<Self::Value, M::Error> {
+                #[derive(Default, Deserialize)]
+                #[serde(default)]
+                struct Inner {
+                    files: Vec<String>,
+                    commands: Vec<String>,
+                    #[serde(rename = "env")]
+                    env_vars: Vec<String>,
+                    content: Vec<ContentMatch>,
+                    search_depth: usize,
+                }
+
+                let inner = Inner::deserialize(de::value::MapAccessDeserializer::new(map))?;
+                Ok(CustomDetectConfig {
+                    files: inner.files,
+                    commands: inner.commands,
+                    env_vars: inner.env_vars,
+                    content: inner.content,
+                    search_depth: inner.search_depth,
+                })
+            }
+        }
+
+        deserializer.deserialize_any(DetectVisitor)
+    }
+}
+
+/// Content matching rule for custom adapter detection.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ContentMatch {
+    /// File to check
+    pub file: String,
+    /// String that must be present in the file
+    pub contains: String,
 }
 
 fn default_parser() -> String {
@@ -445,10 +531,55 @@ confidence = 0.7
         let custom = config.custom_adapter.as_ref().unwrap();
         assert_eq!(custom.len(), 1);
         assert_eq!(custom[0].name, "bazel");
-        assert_eq!(custom[0].detect, "BUILD");
+        assert_eq!(custom[0].detect.files, vec!["BUILD"]);
         assert_eq!(custom[0].command, "bazel test //...");
-        assert_eq!(custom[0].parse, "tap");
+        assert_eq!(custom[0].output, "tap");
         assert!((custom[0].confidence - 0.7).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn load_config_with_custom_adapter_full_detect() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("testx.toml"),
+            r#"
+[[custom_adapter]]
+name = "custom-runner"
+command = "my-runner test"
+output = "json"
+confidence = 0.8
+check = "my-runner --version"
+working_dir = "tests"
+
+[custom_adapter.detect]
+files = ["my-runner.toml", "test.config"]
+commands = ["my-runner --version"]
+env = ["MY_RUNNER_HOME"]
+search_depth = 2
+
+[[custom_adapter.detect.content]]
+file = "package.json"
+contains = "my-runner"
+"#,
+        )
+        .unwrap();
+        let config = Config::load(dir.path());
+        let custom = config.custom_adapter.as_ref().unwrap();
+        assert_eq!(custom.len(), 1);
+        assert_eq!(custom[0].name, "custom-runner");
+        assert_eq!(custom[0].output, "json");
+        assert_eq!(
+            custom[0].detect.files,
+            vec!["my-runner.toml", "test.config"]
+        );
+        assert_eq!(custom[0].detect.commands, vec!["my-runner --version"]);
+        assert_eq!(custom[0].detect.env_vars, vec!["MY_RUNNER_HOME"]);
+        assert_eq!(custom[0].detect.search_depth, 2);
+        assert_eq!(custom[0].detect.content.len(), 1);
+        assert_eq!(custom[0].detect.content[0].file, "package.json");
+        assert_eq!(custom[0].detect.content[0].contains, "my-runner");
+        assert_eq!(custom[0].check.as_deref(), Some("my-runner --version"));
+        assert_eq!(custom[0].working_dir.as_deref(), Some("tests"));
     }
 
     #[test]

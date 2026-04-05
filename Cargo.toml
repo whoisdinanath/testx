@@ -1,6 +1,6 @@
 [package]
 name = "testx-cli"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 description = "One command. Any language. Beautiful tests."
 license = "MIT"
@@ -9,7 +9,7 @@ homepage = "https://github.com/whoisdinanath/testx"
 readme = "README.md"
 keywords = ["testing", "test-runner", "cli", "developer-tools"]
 categories = ["development-tools::testing", "command-line-utilities"]
-exclude = ["sandbox/", "reps/", ".testx/"]
+exclude = ["sandbox/", "reps/", ".testx/", "npm/"]
 
 [[bin]]
 name = "testx"
@@ -51,6 +51,10 @@ harness = false
 name = "output"
 harness = false
 
+[[bench]]
+name = "overhead"
+harness = false
+
 # ── Build profiles ──────────────────────────────────────────
 [profile.dev]
 debug = 0                  # Skip debuginfo → ~15% faster link, smaller binary
@@ -59,6 +63,8 @@ debug = 0                  # Skip debuginfo → ~15% faster link, smaller binary
 opt-level = 1              # Optimise deps (not your code) → faster runtime
 
 [profile.release]
+opt-level = "z"            # Optimise for size (smaller binary)
 lto = "thin"               # Inter-crate optimisation
 strip = true               # Strip symbols automatically
 codegen-units = 1          # Better optimisation at cost of compile time
+panic = "abort"            # Smaller binary — no unwinding tables

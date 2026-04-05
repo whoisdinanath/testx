@@ -52,8 +52,43 @@ name = "my-framework"
 detect = "myframework.config"
 command = "myfw test"
 args = ["--verbose"]
-parse = "lines"
+output = "lines"
 confidence = 0.5
+check = "myfw --version"
+```
+
+For advanced detection (content matching, command verification, env vars):
+
+```toml
+[[custom_adapter]]
+name = "make-test"
+command = "make test"
+output = "lines"
+confidence = 0.85
+
+[custom_adapter.detect]
+files = ["Makefile"]
+commands = ["make --version"]
+
+[[custom_adapter.detect.content]]
+file = "Makefile"
+contains = "test:"
+```
+
+### Global adapters
+
+Place adapter definitions in `~/.config/testx/adapters/*.toml` to make them available across all projects. Supports `XDG_CONFIG_HOME`.
+
+List all registered adapters:
+
+```bash
+testx adapters
+```
+
+Disable custom adapter loading (for debugging or security):
+
+```bash
+testx --no-custom-adapters
 ```
 
 ### Output parsers

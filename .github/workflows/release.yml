@@ -107,18 +107,41 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  publish:
-    name: Publish to crates.io
+  # publish:
+  #   name: Publish to crates.io
+  #   needs: release
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: dtolnay/rust-toolchain@stable
+  #     - name: Publish
+  #       run: cargo publish
+  #       env:
+  #         CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  publish-npm:
+    name: Publish to npm
     needs: release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
 
-      - name: Publish
-        run: cargo publish
+      - name: Update npm package version
+        working-directory: npm
+        run: |
+          version="${{ github.ref_name }}"
+          version="${version#v}"
+          npm version "$version" --no-git-tag-version --allow-same-version || true
+
+      - name: Publish to npm
+        working-directory: npm
+        run: npm publish --access public
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
 

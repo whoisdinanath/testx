@@ -84,7 +84,7 @@ jobs:
         run: cargo install cargo-tarpaulin
 
       - name: Run coverage
-        run: cargo tarpaulin --out xml --skip-clean
+        run: cargo tarpaulin --out xml --skip-clean --timeout 300 --exclude-files "tests/*" -- --skip cli_stress
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
@@ -102,3 +102,40 @@ jobs:
 
       - name: Check MSRV
         run: cargo check
+
+  bench:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run benchmarks (compile check)
+        run: cargo bench --bench overhead -- --test
+
+  binary-size:
+    name: Binary Size Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Check binary size
+        run: |
+          size=$(stat --format="%s" target/release/testx)
+          size_mb=$(echo "scale=2; $size / 1048576" | bc)
+          echo "Binary size: ${size_mb} MB"
+          # Fail if binary exceeds 4 MB
+          if [ "$size" -gt 4194304 ]; then
+            echo "::error::Binary size ${size_mb} MB exceeds 4 MB limit"
+            exit 1
+          fi

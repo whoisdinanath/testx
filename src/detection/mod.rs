@@ -106,6 +106,16 @@ impl DetectionEngine {
     pub fn adapters(&self) -> &[Box<dyn TestAdapter>] {
         &self.adapters
     }
+
+    /// Number of built-in adapters (registered at construction time).
+    /// Custom adapters are appended after these.
+    pub const BUILTIN_COUNT: usize = 11;
+
+    /// Register a custom adapter. Custom adapters are appended after built-in
+    /// ones and participate in normal confidence-based detection.
+    pub fn register(&mut self, adapter: Box<dyn TestAdapter>) {
+        self.adapters.push(adapter);
+    }
 }
 
 #[cfg(test)]

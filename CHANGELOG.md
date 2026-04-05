@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-04-05
+
+### Added
+
+- **Custom adapter system** — define custom test adapters in `testx.toml` or global config
+  - `[[custom_adapter]]` config section with `name`, `detect`, `command`, `args`, `output`, `confidence`, `check`, `working_dir`, `env`
+  - Flexible `detect` config: accepts a simple string (`detect = "BUILD"`) or a full table with `files`, `commands`, `env`, `content`, and `search_depth`
+  - Content-based detection: match file contents (e.g., check if `Makefile` contains `test:`)
+  - Command-based detection: verify commands succeed (exit 0) before activating adapter
+  - Environment variable detection: require specific env vars to be set
+  - `check` field to verify the test runner is installed before execution
+  - Custom adapters participate in confidence-based detection alongside built-in adapters
+- **Global adapter definitions** — load adapters from `~/.config/testx/adapters/*.toml`
+  - Supports both single adapter files and files with `[[custom_adapter]]` arrays
+  - XDG_CONFIG_HOME respected, cross-platform home directory resolution
+- **`testx adapters` subcommand** — list built-in, project-local, and global custom adapters with metadata
+- **`--no-custom-adapters` CLI flag** — disable custom adapter loading for security or debugging
+- **Backward-compatible config** — `parse` field (v0.1.x) still works as alias for `output`
+- **Stress test improvements** — severity classification (Critical/High/Medium/Low), timing statistics (mean, median, P95, P99, CV), Wilson score bounds, `--threshold` and `--parallel-stress` flags, improved exit messages
+- **npm distribution** — `npm install -g @whoisdinanath/testx` with automatic platform binary download
+- **Install script** — `curl -fsSL .../install.sh | sh` one-liner for macOS/Linux
+- **Overhead benchmarks** (`benches/overhead.rs`) — full pipeline benchmarks measuring detection + parsing overhead
+  - Full detect + parse 100 tests: ~138–173 µs per language
+  - Config loading: ~1.4 µs (no file) / ~18 µs (with testx.toml)
+  - Parse scaling: 10 tests → 7 µs, 1000 tests → 570 µs, 5000 tests → 3 ms
+  - JSON serialization: 1000 tests → 422 µs
+- **CI binary size guard** — Fails CI if release binary exceeds 4 MB
+- **CI benchmark check** — Benchmark compilation verified on every push
+- **Performance section in README** — Published overhead numbers with reproducible benchmark command
+
+### Changed
+
+- **Binary size**: 3.8 MB → 2.2 MB (42% reduction) via `opt-level = "z"`, `lto = "thin"`, `strip = true`, `panic = "abort"`, `codegen-units = 1`
+- **Installation docs**: README now lists 4 install methods (crates.io, npm, install script, source)
+- **Release workflow**: Added npm publish job
+- **Framework detection stat**: Updated from "~5ms" to "< 200 µs" based on actual benchmarks
+- **Detection engine**: added `register()` method for dynamic adapter registration
+
+### Fixed
+
+- **Cross-platform**: Fixed literal `~` in path fallback for global config directory (bug on all platforms)
+- **Cross-platform**: Added `HOMEDRIVE`+`HOMEPATH` fallback for Windows service account home directories
+- **Windows**: Custom adapter commands now use `cmd /C` wrapper to find `.cmd`/`.bat` scripts (npm, yarn, gradle, etc.)
+- **Windows**: `glob_detect()` now strips both `/` and `\` path separators
+
 ## [0.1.1] - 2026-04-05
 
 ### Added

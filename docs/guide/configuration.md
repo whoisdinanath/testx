@@ -65,7 +65,7 @@ threshold = 80.0           # Fail if coverage is below this %
 
 # History / analytics
 [history]
-enabled = false
+enabled = true
 max_age_days = 30
 db_path = ".testx/history.db"
 ```
@@ -94,8 +94,49 @@ name = "my-framework"
 detect = "myframework.config"    # File that triggers detection
 command = "myfw test"
 args = ["--verbose"]
-parse = "lines"                  # json | junit | tap | lines | regex
+output = "lines"                  # json | junit | tap | lines
 confidence = 0.5
+check = "myfw --version"          # Verify runner is installed
+working_dir = "tests"             # Working directory (relative to project root)
+
+[custom_adapter.env]
+MY_VAR = "value"
+```
+
+For advanced detection with multiple signals:
+
+```toml
+[[custom_adapter]]
+name = "make-test"
+command = "make test"
+output = "lines"
+confidence = 0.85
+
+[custom_adapter.detect]
+files = ["Makefile", "test.mk"]         # At least one must exist
+commands = ["make --version"]            # All must succeed (exit 0)
+env = ["CI"]                             # All env vars must be set
+search_depth = 2
+
+[[custom_adapter.detect.content]]
+file = "Makefile"
+contains = "test:"                       # File must contain this string
+```
+
+### Global adapters
+
+Place adapter definitions in `~/.config/testx/adapters/*.toml` (or `$XDG_CONFIG_HOME/testx/adapters/`) to make them available across all projects.
+
+List all adapters (built-in, project, and global):
+
+```bash
+testx adapters
+```
+
+Disable custom adapters:
+
+```bash
+testx --no-custom-adapters
 ```
 
 ## Precedence
@@ -112,5 +153,4 @@ testx -o json
 | Variable    | Effect                  |
 | ----------- | ----------------------- |
 | `NO_COLOR`  | Disables colored output |
-| `CI`        | Disables colored output |
 | `TERM=dumb` | Disables colored output |

@@ -99,4 +99,10 @@ Confidence is computed dynamically from weighted signals — config files, test 
 
 ## Custom adapters
 
-You can define additional frameworks in `testx.toml`. See [Plugins](../guide/plugins.md).
+You can define additional frameworks in `testx.toml` or globally in `~/.config/testx/adapters/*.toml`. See [Plugins](../guide/plugins.md) for details.
+
+List all registered adapters (built-in + custom):
+
+```bash
+testx adapters
+```

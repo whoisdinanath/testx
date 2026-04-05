@@ -1,14 +1,28 @@
 # Installation
 
-## From source (recommended)
+## From crates.io (recommended)
 
 Requires [Rust](https://rustup.rs/) 1.87 or newer.
 
 ```bash
-cargo install --path .
+cargo install testx-cli
 ```
 
-Or build from git:
+## npm
+
+```bash
+npm install -g @whoisdinanath/testx
+```
+
+## Install script (macOS / Linux)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/whoisdinanath/testx/main/install.sh | sh
+```
+
+Set `TESTX_VERSION=x.y.z` to install a specific version. Set `TESTX_INSTALL_DIR` to change the install location (default: `~/.local/bin`).
+
+## From source
 
 ```bash
 git clone https://github.com/whoisdinanath/testx.git

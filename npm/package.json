@@ -1,0 +1,42 @@
+{
+  "name": "@whoisdinanath/testx",
+  "version": "0.2.0",
+  "description": "Universal test runner — one command, any language, beautiful tests",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/whoisdinanath/testx.git"
+  },
+  "homepage": "https://github.com/whoisdinanath/testx",
+  "keywords": [
+    "test",
+    "test-runner",
+    "testing",
+    "cli",
+    "universal",
+    "rust",
+    "python",
+    "go",
+    "javascript",
+    "java"
+  ],
+  "bin": {
+    "testx": "bin/testx"
+  },
+  "files": [
+    "bin/",
+    "install.js"
+  ],
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ]
+}
