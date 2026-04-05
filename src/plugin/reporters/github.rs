@@ -207,10 +207,12 @@ fn write_step_summary_commands(lines: &mut Vec<String>, result: &TestRunResult) 
     }
 
     // Output as GITHUB_STEP_SUMMARY echo commands
+    // Use heredoc to avoid shell injection from test names containing quotes
+    lines.push("cat <<'TESTX_EOF' >> $GITHUB_STEP_SUMMARY".to_string());
     for line in md.lines() {
-        let escaped = line.replace('`', "\\`");
-        lines.push(format!("echo '{escaped}' >> $GITHUB_STEP_SUMMARY"));
+        lines.push(line.to_string());
     }
+    lines.push("TESTX_EOF".to_string());
 }
 
 /// Parse a location string like "file.rs:42" or "file.rs:42:10".
@@ -337,12 +339,9 @@ mod tests {
     #[test]
     fn github_step_summary() {
         let lines = generate_github_output(&make_result(), &GithubConfig::default());
-        let summary_lines: Vec<_> = lines
-            .iter()
-            .filter(|l| l.contains("GITHUB_STEP_SUMMARY"))
-            .collect();
-        assert!(!summary_lines.is_empty());
-        assert!(summary_lines.iter().any(|l| l.contains("Test Results")));
+        // Heredoc format: first line references GITHUB_STEP_SUMMARY, content follows
+        assert!(lines.iter().any(|l| l.contains("GITHUB_STEP_SUMMARY")));
+        assert!(lines.iter().any(|l| l.contains("Test Results")));
     }
 
     #[test]
@@ -481,11 +480,9 @@ mod tests {
     #[test]
     fn github_step_summary_failures_listed() {
         let lines = generate_github_output(&make_result(), &GithubConfig::default());
-        let summary_lines: Vec<_> = lines
-            .iter()
-            .filter(|l| l.contains("GITHUB_STEP_SUMMARY"))
-            .collect();
-        assert!(summary_lines.iter().any(|l| l.contains("Failures")));
+        // Heredoc format: content lines are separate from the GITHUB_STEP_SUMMARY line
+        assert!(lines.iter().any(|l| l.contains("GITHUB_STEP_SUMMARY")));
+        assert!(lines.iter().any(|l| l.contains("Failures")));
     }
 
     #[test]

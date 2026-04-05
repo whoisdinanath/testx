@@ -57,7 +57,7 @@ impl HealthScore {
     /// Get a letter grade for the score.
     pub fn grade(&self) -> &str {
         match self.score as u32 {
-            90..=100 => "A",
+            90.. => "A",
             80..=89 => "B",
             70..=79 => "C",
             60..=69 => "D",

@@ -157,7 +157,7 @@ fn write_summary(md: &mut String, result: &TestRunResult) {
         let _ = writeln!(
             md,
             "| {} | {} | {} | {} | {} | {} |",
-            suite.name,
+            md_escape(&suite.name),
             suite.tests.len(),
             suite.passed(),
             suite.failed(),
@@ -230,7 +230,12 @@ fn write_failures(md: &mut String, result: &TestRunResult) {
 
     for suite in &result.suites {
         for test in suite.failures() {
-            let _ = writeln!(md, "###  {}::{}", suite.name, test.name);
+            let _ = writeln!(
+                md,
+                "###  {}::{}",
+                md_escape(&suite.name),
+                md_escape(&test.name)
+            );
             md.push('\n');
             if let Some(ref error) = test.error {
                 let _ = writeln!(md, "```");
@@ -261,8 +266,8 @@ fn write_slowest(md: &mut String, result: &TestRunResult, n: usize) {
             md,
             "| {} | {} | {} | {} |",
             i + 1,
-            test.name,
-            suite.name,
+            md_escape(&test.name),
+            md_escape(&suite.name),
             format_duration(test.duration),
         );
     }

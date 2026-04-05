@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -361,27 +362,25 @@ pub fn build_parallel_result(workers: Vec<WorkerResult>) -> ParallelResult {
 /// Thread-safe cancellation flag for fail-fast mode.
 #[derive(Debug, Clone)]
 pub struct CancellationToken {
-    cancelled: Arc<Mutex<bool>>,
+    cancelled: Arc<AtomicBool>,
 }
 
 impl CancellationToken {
     /// Create a new cancellation token.
     pub fn new() -> Self {
         Self {
-            cancelled: Arc::new(Mutex::new(false)),
+            cancelled: Arc::new(AtomicBool::new(false)),
         }
     }
 
     /// Cancel all workers.
     pub fn cancel(&self) {
-        if let Ok(mut c) = self.cancelled.lock() {
-            *c = true;
-        }
+        self.cancelled.store(true, Ordering::Release);
     }
 
     /// Check if cancellation was requested.
     pub fn is_cancelled(&self) -> bool {
-        self.cancelled.lock().map(|c| *c).unwrap_or(false)
+        self.cancelled.load(Ordering::Acquire)
     }
 }
 

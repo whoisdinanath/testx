@@ -253,8 +253,8 @@ impl TestAdapter for JavaScriptAdapter {
                     TestStatus::Failed
                 };
 
-                let rest = &trimmed[trimmed.char_indices().nth(1).map(|(i, _)| i).unwrap_or(1)..]
-                    .trim_start();
+                let first_char_len = trimmed.chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+                let rest = &trimmed[first_char_len..].trim_start();
                 // AVA failure format: "[fail]: suite › test Error msg" — strip "[fail]: " prefix
                 let rest = rest.strip_prefix("[fail]: ").unwrap_or(rest);
                 let (name, duration) = parse_jest_test_line(rest);

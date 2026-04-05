@@ -155,7 +155,7 @@ fn shard_hash(result: &TestRunResult, index: usize, total: usize) -> TestRunResu
 
     for (si, suite) in result.suites.iter().enumerate() {
         for test in &suite.tests {
-            let hash_key = format!("{}::{}::{}", si, suite.name, test.name);
+            let hash_key = format!("{}::{}", suite.name, test.name);
             let mut hasher = StableHasher::new();
             hash_key.hash(&mut hasher);
             let hash_val = hasher.finish();

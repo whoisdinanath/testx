@@ -25,7 +25,8 @@ impl BackoffStrategy {
             BackoffStrategy::Linear(base) => *base * attempt,
             BackoffStrategy::Exponential { base, max } => {
                 let multiplier = 2u64.saturating_pow(attempt);
-                let delay = base.saturating_mul(multiplier as u32);
+                let capped = multiplier.min(u32::MAX as u64) as u32;
+                let delay = base.saturating_mul(capped);
                 if delay > *max { *max } else { delay }
             }
         }

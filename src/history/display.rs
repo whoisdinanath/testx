@@ -77,7 +77,10 @@ pub fn format_flaky_tests(flaky: &[FlakyTest]) -> String {
 
     for test in flaky {
         let name = if test.name.len() > 40 {
-            format!("…{}", &test.name[test.name.len() - 39..])
+            let start = test
+                .name
+                .ceil_char_boundary(test.name.len().saturating_sub(39));
+            format!("…{}", &test.name[start..])
         } else {
             test.name.clone()
         };
@@ -123,7 +126,10 @@ pub fn format_slow_tests(slow: &[SlowTest]) -> String {
 
     for test in slow.iter().take(20) {
         let name = if test.name.len() > 40 {
-            format!("…{}", &test.name[test.name.len() - 39..])
+            let start = test
+                .name
+                .ceil_char_boundary(test.name.len().saturating_sub(39));
+            format!("…{}", &test.name[start..])
         } else {
             test.name.clone()
         };

@@ -1,18 +1,27 @@
 # Monorepo / Workspace
 
-The `testx workspace` command scans a directory tree, discovers all projects with test frameworks, and runs tests across all of them — in parallel by default.
+If you have a **monorepo** (a single repository containing multiple projects), the `testx workspace` command can discover all the projects inside it and run their tests — in parallel by default.
+
+This means you don't need to `cd` into each project and run tests separately. One command tests everything.
+
+---
 
 ## Basic usage
 
 ```bash
-# Discover and test all projects
+# Discover and test all projects in the current directory tree
 testx workspace
+```
 
-# List detected projects without running
+testx will recursively scan your directory, find all projects with recognized test frameworks, and run their tests.
+
+### Dry run — just list what's detected
+
+```bash
 testx workspace --list
 ```
 
-Example output with `--list`:
+Example output:
 
 ```
 Discovered 5 projects:
@@ -23,9 +32,13 @@ Discovered 5 projects:
   5. tools/cli        → Rust (cargo test)
 ```
 
+This is useful for verifying that testx found all your projects before actually running anything.
+
+---
+
 ## Filtering by language
 
-Run only specific languages:
+If you only want to test certain languages:
 
 ```bash
 # Only Rust and Python projects
@@ -35,63 +48,88 @@ testx workspace --filter rust,python
 testx workspace --filter javascript
 ```
 
-## Including skipped directories
+---
 
-By default, testx skips common non-project directories like `node_modules`, `target`, `vendor`, `packages`, etc. Use `--include` to override:
+## Including normally-skipped directories
+
+By default, testx skips common non-project directories to avoid false detections and speed up scanning. The full skip list:
+
+`.git`, `node_modules`, `target`, `build`, `dist`, `vendor`, `venv`, `__pycache__`, `.tox`, `.gradle`, `.idea`, `.vscode`, `bin`, `obj`, `packages`, `zig-cache`, `_build`, `deps`, `.bundle`, `.cargo`
+
+If your projects live inside one of these directories (common in monorepo setups with a `packages/` folder), use `--include`:
 
 ```bash
-# Include packages/ directory (common in monorepos)
+# Scan inside the packages/ directory
 testx workspace --include packages
 
 # Include multiple directories
 testx workspace --include packages,vendor
 ```
 
-**Default skip list:** `.git`, `node_modules`, `target`, `build`, `dist`, `vendor`, `venv`, `__pycache__`, `.tox`, `.gradle`, `.idea`, `.vscode`, `bin`, `obj`, `packages`, `zig-cache`, `_build`, `deps`, `.bundle`, `.cargo`
+---
 
 ## Controlling parallelism
+
+By default, testx runs all discovered projects **in parallel** using as many CPU cores as available. You can control this:
 
 ```bash
 # Auto-detect CPU count (default)
 testx workspace --jobs 0
 
-# Use 4 parallel workers
+# Limit to 4 parallel workers
 testx workspace --jobs 4
 
-# Run one project at a time
+# Run one project at a time (useful for debugging or resource-constrained environments)
 testx workspace --sequential
 ```
 
+---
+
 ## Fail-fast mode
 
-Stop on the first project failure:
+Stop testing as soon as any project fails:
 
 ```bash
 testx workspace --fail-fast
 ```
 
+Without this, testx runs all projects and reports all failures at the end.
+
+---
+
 ## Scan depth
 
-Control how deep the directory scan goes:
+Control how deep testx looks for projects:
 
 ```bash
-# Scan up to 3 levels deep
+# Only scan 3 levels deep
 testx workspace --max-depth 3
 
-# Unlimited depth
+# Unlimited depth (can be slow in very large trees)
 testx workspace --max-depth 0
 ```
 
-The default depth is 5 levels.
+The default is 5 levels, which works well for most monorepo structures.
+
+---
 
 ## Options reference
 
-| Flag             | Short | Type    | Default | Description                                                         |
-| ---------------- | ----- | ------- | ------- | ------------------------------------------------------------------- |
-| `--max-depth`    |       | N       | `5`     | Maximum directory depth (0 = unlimited)                             |
-| `--jobs`         | `-j`  | N       | `0`     | Parallel jobs (0 = auto-detect CPUs)                                |
-| `--sequential`   |       | —       | —       | Run projects one at a time                                          |
-| `--fail-fast`    |       | —       | —       | Stop on first project failure                                       |
-| `--filter`       |       | STRING  | —       | Filter by language (comma-separated)                                |
-| `--include`      |       | STRING  | —       | Include normally skipped directories                                |
-| `--list`         |       | —       | —       | List projects without running                                       |
+| Flag           | Short | Type   | Default | Description                                            |
+| -------------- | ----- | ------ | ------- | ------------------------------------------------------ |
+| `--max-depth`  |       | N      | `5`     | Maximum directory depth to scan                        |
+| `--jobs`       | `-j`  | N      | `0`     | Parallel jobs (0 = auto-detect CPU count)              |
+| `--sequential` |       | —      | —       | Run projects one at a time                             |
+| `--fail-fast`  |       | —      | —       | Stop on first project failure                          |
+| `--filter`     |       | STRING | —       | Filter by language (comma-separated)                   |
+| `--include`    |       | STRING | —       | Include directories that are normally skipped           |
+| `--list`       |       | —      | —       | List discovered projects without running tests         |
+
+---
+
+## Tips
+
+- Use `testx workspace --list` first to check detection before running tests
+- In CI, combine with sharding for faster pipelines: `testx workspace --filter rust --partition slice:1/2`
+- Use `--sequential` when debugging to see output from each project in order
+- Add a `testx.toml` in individual project directories to customize their behavior (timeouts, args, etc.)

@@ -43,13 +43,9 @@ impl TestAdapter for RustAdapter {
         }
 
         // Distinguish workspace roots from package roots
-        let is_workspace = std::fs::read_to_string(&cargo_toml)
-            .map(|content| content.contains("[workspace]"))
-            .unwrap_or(false);
-
-        let has_package = std::fs::read_to_string(&cargo_toml)
-            .map(|content| content.contains("[package]"))
-            .unwrap_or(false);
+        let content = std::fs::read_to_string(&cargo_toml).unwrap_or_default();
+        let is_workspace = content.contains("[workspace]");
+        let has_package = content.contains("[package]");
 
         // Pure workspace root with no [package] — cargo test still works
         // (runs all member tests) but confidence is lower
@@ -278,7 +274,7 @@ fn parse_cargo_failures(output: &str) -> std::collections::HashMap<&str, String>
     while i < lines.len() {
         let trimmed = lines[i].trim();
         // Match "---- test_name stdout ----"
-        if trimmed.starts_with("---- ") && trimmed.ends_with(" stdout ----") {
+        if trimmed.starts_with("---- ") && trimmed.ends_with(" stdout ----") && trimmed.len() > 17 {
             let test_name = &trimmed[5..trimmed.len() - 12].trim();
             // Collect the panic message from subsequent lines
             let mut msg_lines = Vec::new();

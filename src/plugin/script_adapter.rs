@@ -410,18 +410,10 @@ fn glob_detect(project_dir: &Path, pattern: &str) -> bool {
     }
 }
 
-/// Create a `Command` from a program name, handling `.cmd`/`.bat` on Windows.
+/// Create a `Command` from a program name.
+/// Uses direct execution (no shell) to prevent command injection.
 fn create_command(program: &str) -> std::process::Command {
-    #[cfg(windows)]
-    {
-        let mut cmd = std::process::Command::new("cmd");
-        cmd.args(["/C", program]);
-        cmd
-    }
-    #[cfg(not(windows))]
-    {
-        std::process::Command::new(program)
-    }
+    std::process::Command::new(program)
 }
 
 // ─── Output Parsers ─────────────────────────────────────────────────────
