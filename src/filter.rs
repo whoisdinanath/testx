@@ -247,10 +247,22 @@ fn parse_glob_segments(pattern: &str) -> Vec<GlobSegment> {
 
 /// Match a glob pattern against a string.
 fn glob_match(segments: &[GlobSegment], s: &str) -> bool {
-    glob_match_recursive(segments, s, 0, 0)
+    glob_match_recursive(segments, s, 0, 0, 0)
 }
 
-fn glob_match_recursive(segments: &[GlobSegment], s: &str, seg_idx: usize, str_idx: usize) -> bool {
+fn glob_match_recursive(
+    segments: &[GlobSegment],
+    s: &str,
+    seg_idx: usize,
+    str_idx: usize,
+    depth: usize,
+) -> bool {
+    // Guard against pathological patterns (e.g. *a*b*c*d*... on non-matching strings)
+    const MAX_DEPTH: usize = 1024;
+    if depth > MAX_DEPTH {
+        return false;
+    }
+
     if seg_idx == segments.len() {
         return str_idx == s.len();
     }
@@ -258,19 +270,39 @@ fn glob_match_recursive(segments: &[GlobSegment], s: &str, seg_idx: usize, str_i
     match &segments[seg_idx] {
         GlobSegment::Literal(lit) => {
             if s[str_idx..].starts_with(lit) {
-                glob_match_recursive(segments, s, seg_idx + 1, str_idx + lit.len())
+                glob_match_recursive(segments, s, seg_idx + 1, str_idx + lit.len(), depth + 1)
             } else {
                 false
             }
         }
         GlobSegment::Wildcard => {
-            // Try matching 0 or more characters
-            for i in str_idx..=s.len() {
-                if glob_match_recursive(segments, s, seg_idx + 1, i) {
-                    return true;
-                }
+            // Try matching 0 or more characters.
+            // Optimization: if this is the last segment, any remaining string matches.
+            if seg_idx + 1 == segments.len() {
+                return true;
             }
-            false
+            // Skip ahead to the next literal to avoid exponential backtracking:
+            // find all positions where the next literal could start, only recurse there.
+            if let Some(GlobSegment::Literal(next_lit)) = segments.get(seg_idx + 1) {
+                let remaining = &s[str_idx..];
+                let mut search_from = 0;
+                while let Some(pos) = remaining[search_from..].find(next_lit.as_str()) {
+                    let abs_pos = str_idx + search_from + pos;
+                    if glob_match_recursive(segments, s, seg_idx + 1, abs_pos, depth + 1) {
+                        return true;
+                    }
+                    search_from += pos + 1;
+                }
+                false
+            } else {
+                // Next segment is also a wildcard — try each position
+                for i in str_idx..=s.len() {
+                    if glob_match_recursive(segments, s, seg_idx + 1, i, depth + 1) {
+                        return true;
+                    }
+                }
+                false
+            }
         }
     }
 }

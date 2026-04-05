@@ -1,5 +1,5 @@
 site_name: testx
-site_url: https://testx.readthedocs.io/
+site_url: https://testx-cli.readthedocs.io/
 site_description: "Universal test runner — one command to test any project"
 site_author: Dinanath
 
@@ -41,6 +41,8 @@ nav:
       - Impact Analysis: guide/impact-analysis.md
       - Smart Caching: guide/caching.md
       - Interactive Picker: guide/picker.md
+      - Monorepo / Workspace: guide/workspace.md
+      - Test History: guide/history.md
       - Configuration: guide/configuration.md
       - Plugins: guide/plugins.md
   - Languages:

@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use colored::Colorize;
 
+use crate::adapters::util::xml_escape;
 use crate::adapters::{TestRunResult, TestStatus};
 use crate::detection::DetectedProject;
 
@@ -237,7 +238,7 @@ pub fn print_junit_xml(result: &TestRunResult) {
                         .map(|e| e.message.as_str())
                         .unwrap_or("Test failed");
                     buf.push_str(&format!(
-                        "      <failure message=\"{}\">{}</failure>\n",
+                        "      <failure message=\"{}\" type=\"AssertionError\">{}</failure>\n",
                         xml_escape(msg),
                         xml_escape(msg),
                     ));
@@ -265,14 +266,6 @@ pub fn print_junit_xml(result: &TestRunResult) {
     let _ = stdout.write_all(buf.as_bytes());
 }
 
-fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}
-
 /// Print results in TAP (Test Anything Protocol) format
 pub fn print_tap(result: &TestRunResult) {
     use std::io::Write;
@@ -280,8 +273,16 @@ pub fn print_tap(result: &TestRunResult) {
     let total = result.total_tests();
     let mut stdout = std::io::stdout().lock();
 
-    let _ = writeln!(stdout, "TAP version 13");
-    let _ = writeln!(stdout, "1..{total}");
+    macro_rules! tap_write {
+        ($($arg:tt)*) => {
+            if writeln!(stdout, $($arg)*).is_err() {
+                return;
+            }
+        }
+    }
+
+    tap_write!("TAP version 13");
+    tap_write!("1..{total}");
 
     let mut n = 0;
     for suite in &result.suites {
@@ -290,21 +291,21 @@ pub fn print_tap(result: &TestRunResult) {
             let full_name = format!("{} - {}", suite.name, test.name);
             match test.status {
                 TestStatus::Passed => {
-                    let _ = writeln!(stdout, "ok {n} {full_name}");
+                    tap_write!("ok {n} {full_name}");
                 }
                 TestStatus::Failed => {
-                    let _ = writeln!(stdout, "not ok {n} {full_name}");
+                    tap_write!("not ok {n} {full_name}");
                     if let Some(err) = &test.error {
-                        let _ = writeln!(stdout, "  ---");
-                        let _ = writeln!(stdout, "  message: {}", err.message);
+                        tap_write!("  ---");
+                        tap_write!("  message: {}", err.message);
                         if let Some(loc) = &err.location {
-                            let _ = writeln!(stdout, "  at: {loc}");
+                            tap_write!("  at: {loc}");
                         }
-                        let _ = writeln!(stdout, "  ...");
+                        tap_write!("  ...");
                     }
                 }
                 TestStatus::Skipped => {
-                    let _ = writeln!(stdout, "ok {n} {full_name} # SKIP");
+                    tap_write!("ok {n} {full_name} # SKIP");
                 }
             }
         }

@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use super::util::duration_from_secs_safe;
+use super::util::{combined_output, duration_from_secs_safe, ensure_non_empty};
 use super::{
     ConfidenceScore, DetectionResult, TestAdapter, TestCase, TestRunResult, TestStatus, TestSuite,
 };
@@ -98,8 +98,13 @@ impl TestAdapter for RustAdapter {
         Ok(cmd)
     }
 
+    fn filter_args(&self, pattern: &str) -> Vec<String> {
+        // cargo test uses positional args as substring/regex filters
+        vec![pattern.to_string()]
+    }
+
     fn parse_output(&self, stdout: &str, stderr: &str, exit_code: i32) -> TestRunResult {
-        let combined = format!("{}\n{}", stdout, stderr);
+        let combined = combined_output(stdout, stderr);
         let mut suites: Vec<TestSuite> = Vec::new();
         let mut current_suite_name = String::from("tests");
         let mut current_tests: Vec<TestCase> = Vec::new();
@@ -211,22 +216,7 @@ impl TestAdapter for RustAdapter {
             });
         }
 
-        if suites.is_empty() {
-            let status = if exit_code == 0 {
-                TestStatus::Passed
-            } else {
-                TestStatus::Failed
-            };
-            suites.push(TestSuite {
-                name: "tests".into(),
-                tests: vec![TestCase {
-                    name: "test_suite".into(),
-                    status,
-                    duration: Duration::from_millis(0),
-                    error: None,
-                }],
-            });
-        }
+        ensure_non_empty(&mut suites, exit_code, "tests");
 
         // Parse total duration from "test result: ... finished in X.XXs"
         let duration = parse_cargo_duration(&combined).unwrap_or(Duration::from_secs(0));

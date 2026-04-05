@@ -427,8 +427,12 @@ fn compute_timing_stats(durations: &[Duration]) -> Option<TimingStats> {
     let std_dev = variance.sqrt();
     let cv = if mean > 0.0 { std_dev / mean } else { 0.0 };
 
-    let p95_idx = ((ms_values.len() as f64 * 0.95).ceil() as usize).min(ms_values.len()) - 1;
-    let p99_idx = ((ms_values.len() as f64 * 0.99).ceil() as usize).min(ms_values.len()) - 1;
+    let p95_idx = ((ms_values.len() as f64 * 0.95).ceil() as usize)
+        .min(ms_values.len())
+        .saturating_sub(1);
+    let p99_idx = ((ms_values.len() as f64 * 0.99).ceil() as usize)
+        .min(ms_values.len())
+        .saturating_sub(1);
 
     Some(TimingStats {
         mean_ms: mean,

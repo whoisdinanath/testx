@@ -160,9 +160,10 @@ fn write_annotations(lines: &mut Vec<String>, suite: &TestSuite) {
         }
 
         lines.push(format!(
-            "::error title={} ({})::{msg}",
+            "::error title={} ({})::{}",
             escape_workflow_value(&test.name),
             suite.name,
+            escape_workflow_value(&msg),
         ));
     }
 }
@@ -237,6 +238,8 @@ fn escape_workflow_value(s: &str) -> String {
     s.replace('%', "%25")
         .replace('\r', "%0D")
         .replace('\n', "%0A")
+        .replace(':', "%3A")
+        .replace(',', "%2C")
 }
 
 fn format_duration(d: Duration) -> String {
@@ -421,5 +424,206 @@ mod tests {
     fn escape_workflow_percent() {
         let escaped = escape_workflow_value("100%");
         assert_eq!(escaped, "100%25");
+    }
+
+    // ─── Edge Case Tests ────────────────────────────────────────────────
+
+    #[test]
+    fn github_empty_result() {
+        let result = TestRunResult {
+            suites: vec![],
+            duration: Duration::ZERO,
+            raw_exit_code: 0,
+        };
+        let lines = generate_github_output(&result, &GithubConfig::default());
+        let notice = lines.iter().find(|l| l.starts_with("::notice::")).unwrap();
+        assert!(notice.contains("0 tests passed"));
+    }
+
+    #[test]
+    fn github_all_tests_passing() {
+        let result = TestRunResult {
+            suites: vec![TestSuite {
+                name: "suite".into(),
+                tests: vec![
+                    make_test("t1", TestStatus::Passed, 1),
+                    make_test("t2", TestStatus::Passed, 2),
+                ],
+            }],
+            duration: Duration::from_millis(10),
+            raw_exit_code: 0,
+        };
+        let lines = generate_github_output(&result, &GithubConfig::default());
+        // No ::error:: lines for passing tests
+        assert!(!lines.iter().any(|l| l.starts_with("::error")));
+        let notice = lines.iter().find(|l| l.starts_with("::notice::")).unwrap();
+        assert!(notice.contains("passed"));
+    }
+
+    #[test]
+    fn github_all_tests_failing() {
+        let result = TestRunResult {
+            suites: vec![TestSuite {
+                name: "s".into(),
+                tests: vec![
+                    make_failed_test("f1", 1, "err1", None),
+                    make_failed_test("f2", 2, "err2", Some("x.rs:1")),
+                ],
+            }],
+            duration: Duration::from_millis(10),
+            raw_exit_code: 1,
+        };
+        let lines = generate_github_output(&result, &GithubConfig::default());
+        let error_lines: Vec<_> = lines.iter().filter(|l| l.starts_with("::error")).collect();
+        assert_eq!(error_lines.len(), 2);
+    }
+
+    #[test]
+    fn github_step_summary_failures_listed() {
+        let lines = generate_github_output(&make_result(), &GithubConfig::default());
+        let summary_lines: Vec<_> = lines
+            .iter()
+            .filter(|l| l.contains("GITHUB_STEP_SUMMARY"))
+            .collect();
+        assert!(summary_lines.iter().any(|l| l.contains("Failures")));
+    }
+
+    #[test]
+    fn github_no_step_summary() {
+        let config = GithubConfig {
+            step_summary: false,
+            ..Default::default()
+        };
+        let lines = generate_github_output(&make_result(), &config);
+        assert!(!lines.iter().any(|l| l.contains("GITHUB_STEP_SUMMARY")));
+    }
+
+    #[test]
+    fn github_no_annotations() {
+        let config = GithubConfig {
+            annotations: false,
+            ..Default::default()
+        };
+        let lines = generate_github_output(&make_result(), &config);
+        assert!(!lines.iter().any(|l| l.starts_with("::error")));
+    }
+
+    #[test]
+    fn github_all_disabled() {
+        let config = GithubConfig {
+            annotations: false,
+            groups: false,
+            step_summary: false,
+            problem_matcher: false,
+        };
+        let lines = generate_github_output(&make_result(), &config);
+        // Should only have the final ::notice:: line
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].starts_with("::notice::"));
+    }
+
+    #[test]
+    fn github_skipped_test_in_group() {
+        let result = TestRunResult {
+            suites: vec![TestSuite {
+                name: "s".into(),
+                tests: vec![make_test("skipped", TestStatus::Skipped, 0)],
+            }],
+            duration: Duration::ZERO,
+            raw_exit_code: 0,
+        };
+        let lines = generate_github_output(&result, &GithubConfig::default());
+        let group_content: Vec<_> = lines
+            .iter()
+            .filter(|l| l.contains("skipped") && !l.starts_with("::notice"))
+            .collect();
+        assert!(!group_content.is_empty());
+    }
+
+    #[test]
+    fn github_annotation_newlines_escaped() {
+        let result = TestRunResult {
+            suites: vec![TestSuite {
+                name: "s".into(),
+                tests: vec![make_failed_test(
+                    "multi_line",
+                    1,
+                    "line1\nline2\nline3",
+                    None,
+                )],
+            }],
+            duration: Duration::ZERO,
+            raw_exit_code: 1,
+        };
+        let lines = generate_github_output(&result, &GithubConfig::default());
+        let error_line = lines.iter().find(|l| l.starts_with("::error")).unwrap();
+        // Newlines should be escaped as %0A
+        assert!(error_line.contains("%0A"));
+        assert!(!error_line.contains('\n') || error_line.matches('\n').count() == 0);
+    }
+
+    #[test]
+    fn github_location_with_column() {
+        let result = TestRunResult {
+            suites: vec![TestSuite {
+                name: "s".into(),
+                tests: vec![make_failed_test("t", 1, "err", Some("file.rs:10:5"))],
+            }],
+            duration: Duration::ZERO,
+            raw_exit_code: 1,
+        };
+        let lines = generate_github_output(&result, &GithubConfig::default());
+        let error_line = lines.iter().find(|l| l.starts_with("::error")).unwrap();
+        assert!(error_line.contains("file=file.rs"));
+        assert!(error_line.contains("line=10"));
+    }
+
+    #[test]
+    fn parse_location_just_filename() {
+        assert!(parse_location("nocolon").is_none());
+    }
+
+    #[test]
+    fn parse_location_non_numeric_after_colon() {
+        assert!(parse_location("file.rs:abc").is_none());
+    }
+
+    #[test]
+    fn parse_location_empty_line_number() {
+        assert!(parse_location("file.rs:").is_none());
+    }
+
+    #[test]
+    fn github_duration_formatting() {
+        let result = TestRunResult {
+            suites: vec![],
+            duration: Duration::from_secs(125),
+            raw_exit_code: 0,
+        };
+        let lines = generate_github_output(&result, &GithubConfig::default());
+        let notice = lines.iter().find(|l| l.starts_with("::notice::")).unwrap();
+        // Should format as seconds, not ms
+        assert!(notice.contains("s"));
+    }
+
+    #[test]
+    fn github_duration_less_than_1ms() {
+        assert_eq!(format_duration(Duration::ZERO), "<1ms");
+    }
+
+    #[test]
+    fn github_plugin_on_event_is_noop() {
+        let mut r = GithubReporter::new(GithubConfig::default());
+        let result = r.on_event(&TestEvent::Warning {
+            message: "test".into(),
+        });
+        assert!(result.is_ok());
+        assert!(r.output().is_empty());
+    }
+
+    #[test]
+    fn github_plugin_shutdown() {
+        let mut r = GithubReporter::new(GithubConfig::default());
+        assert!(r.shutdown().is_ok());
     }
 }

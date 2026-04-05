@@ -80,7 +80,7 @@ impl RunnerConfig {
             self.extra_args = config.args.clone();
         }
         if self.timeout.is_none() {
-            self.timeout = config.timeout.map(Duration::from_secs);
+            self.timeout = config.timeout.filter(|&t| t > 0).map(Duration::from_secs);
         }
         for (key, value) in &config.env {
             self.env.entry(key.clone()).or_insert_with(|| value.clone());
@@ -290,6 +290,22 @@ impl Runner {
     fn execute_command(&mut self, cmd: &mut Command) -> Result<ExecutionOutput> {
         let start = Instant::now();
 
+        // On Unix, spawn in a new process group so we can kill the entire tree
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            // SAFETY: pre_exec is called after fork, before exec. setpgid(0,0)
+            // makes the child the leader of its own process group.
+            unsafe {
+                cmd.pre_exec(|| {
+                    if libc::setpgid(0, 0) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+        }
+
         let mut child = cmd
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -347,7 +363,24 @@ impl Runner {
                     Err(mpsc::RecvTimeoutError::Timeout) => {
                         if start.elapsed() > timeout_dur {
                             timed_out = true;
-                            let _ = child.kill();
+                            // Kill the entire process group (child + grandchildren)
+                            #[cfg(unix)]
+                            {
+                                // Send SIGKILL to the process group (-pid)
+                                let pid = child.id() as libc::pid_t;
+                                if unsafe { libc::kill(-pid, libc::SIGKILL) } != 0 {
+                                    eprintln!(
+                                        "warning: failed to kill process group {}: {}",
+                                        pid,
+                                        std::io::Error::last_os_error()
+                                    );
+                                    let _ = child.kill();
+                                }
+                            }
+                            #[cfg(not(unix))]
+                            {
+                                let _ = child.kill();
+                            }
                             let _ = child.wait();
                             break;
                         }
@@ -362,9 +395,21 @@ impl Runner {
             }
         }
 
-        // Collect results from threads
-        let stdout_lines = stdout_handle.join().unwrap_or_default();
-        let stderr_lines = stderr_handle.join().unwrap_or_default();
+        // Collect results from threads — log warnings if reader threads panicked
+        let stdout_lines = match stdout_handle.join() {
+            Ok(lines) => lines,
+            Err(_) => {
+                eprintln!("warning: stdout reader thread panicked");
+                Vec::new()
+            }
+        };
+        let stderr_lines = match stderr_handle.join() {
+            Ok(lines) => lines,
+            Err(_) => {
+                eprintln!("warning: stderr reader thread panicked");
+                Vec::new()
+            }
+        };
 
         let exit_code = if timed_out {
             124

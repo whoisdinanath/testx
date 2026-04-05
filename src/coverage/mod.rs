@@ -209,18 +209,6 @@ impl FileCoverage {
     }
 }
 
-/// Trait for language-specific coverage providers.
-pub trait CoverageProvider {
-    /// Return extra CLI arguments to enable coverage for this adapter.
-    fn coverage_args(&self) -> Vec<String>;
-
-    /// Parse coverage data from the output directory.
-    fn parse_coverage(&self, output_dir: &Path) -> crate::error::Result<CoverageResult>;
-
-    /// Name of the coverage tool being used.
-    fn tool_name(&self) -> &str;
-}
-
 /// Adapter-specific coverage configurations.
 #[derive(Debug, Clone)]
 pub struct AdapterCoverageConfig {
@@ -321,7 +309,7 @@ pub fn merge_coverage(results: &[CoverageResult]) -> CoverageResult {
             }
 
             // Recalculate from merged line_hits
-            entry.total_lines = entry.total_lines.max(file.total_lines);
+            entry.total_lines = entry.line_hits.len().max(file.total_lines);
             entry.covered_lines = entry.line_hits.values().filter(|&&h| h > 0).count();
             entry.total_branches = entry.total_branches.max(file.total_branches);
             entry.covered_branches = entry.covered_branches.max(file.covered_branches);

@@ -221,7 +221,7 @@ fn write_header_section(html: &mut String, result: &TestRunResult, config: &Html
     let _ = writeln!(
         html,
         "<p>Duration: {} | Exit code: {}</p>",
-        format_duration(result.duration),
+        html_escape(&format_duration(result.duration)),
         result.raw_exit_code,
     );
 }
@@ -249,7 +249,12 @@ fn write_summary_cards(html: &mut String, result: &TestRunResult) {
         " skip-text",
     );
     write_card(html, &result.suites.len().to_string(), "Suites", "");
-    write_card(html, &format_duration(result.duration), "Duration", "");
+    write_card(
+        html,
+        &html_escape(&format_duration(result.duration)),
+        "Duration",
+        "",
+    );
 
     let _ = writeln!(html, "</div>");
 }
@@ -363,7 +368,11 @@ fn write_suite_details(html: &mut String, result: &TestRunResult, config: &HtmlC
                 test.status
             );
             if config.show_durations {
-                let _ = write!(html, "<td>{}</td>", format_duration(test.duration));
+                let _ = write!(
+                    html,
+                    "<td>{}</td>",
+                    html_escape(&format_duration(test.duration))
+                );
             }
             let error_cell = test
                 .error
@@ -419,7 +428,7 @@ fn write_slowest_section(html: &mut String, result: &TestRunResult, n: usize) {
             html,
             "<tr><td>{}</td><td>{test_name}</td><td>{suite_name}</td><td>{}</td></tr>",
             i + 1,
-            format_duration(test.duration),
+            html_escape(&format_duration(test.duration)),
         );
     }
 
@@ -442,7 +451,7 @@ fn html_escape(s: &str) -> String {
 fn format_duration(d: Duration) -> String {
     let ms = d.as_millis();
     if ms == 0 {
-        "&lt;1ms".to_string()
+        "<1ms".to_string()
     } else if ms < 1000 {
         format!("{ms}ms")
     } else {
@@ -703,5 +712,261 @@ mod tests {
         let html = generate_html(&result, &HtmlConfig::default());
         assert!(html.contains("<!DOCTYPE html>"));
         assert!(html.contains("PASSED"));
+    }
+
+    // ─── Edge Case Tests ────────────────────────────────────────────────
+
+    #[test]
+    fn html_all_skipped() {
+        let result = TestRunResult {
+            suites: vec![TestSuite {
+                name: "skip-suite".into(),
+                tests: vec![
+                    make_test("s1", TestStatus::Skipped, 0),
+                    make_test("s2", TestStatus::Skipped, 0),
+                ],
+            }],
+            duration: Duration::from_millis(5),
+            raw_exit_code: 0,
+        };
+        let html = generate_html(&result, &HtmlConfig::default());
+        assert!(html.contains(">2<")); // total = 2
+        assert!(html.contains("class=\"skip\"")); // skip segment in progress bar
+        assert!(!html.contains("<h2>Failures</h2>"));
+    }
+
+    #[test]
+    fn html_zero_tests_no_progress_bar() {
+        let result = TestRunResult {
+            suites: vec![TestSuite {
+                name: "empty".into(),
+                tests: vec![],
+            }],
+            duration: Duration::ZERO,
+            raw_exit_code: 0,
+        };
+        let html = generate_html(&result, &HtmlConfig::default());
+        // Progress bar should not render with 0 total
+        assert!(!html.contains("class=\"pass\" style=\"width:"));
+    }
+
+    #[test]
+    fn html_custom_title() {
+        let config = HtmlConfig {
+            title: "My Special Report".into(),
+            ..Default::default()
+        };
+        let html = generate_html(&make_result(), &config);
+        assert!(html.contains("<title>My Special Report</title>"));
+        assert!(html.contains("My Special Report"));
+    }
+
+    #[test]
+    fn html_title_xss_escaped() {
+        let config = HtmlConfig {
+            title: "<script>alert('xss')</script>".into(),
+            ..Default::default()
+        };
+        let html = generate_html(&make_result(), &config);
+        assert!(!html.contains("<script>alert"));
+        assert!(html.contains("&lt;script&gt;"));
+    }
+
+    #[test]
+    fn html_error_message_xss_escaped() {
+        let result = TestRunResult {
+            suites: vec![TestSuite {
+                name: "s".into(),
+                tests: vec![TestCase {
+                    name: "t".into(),
+                    status: TestStatus::Failed,
+                    duration: Duration::ZERO,
+                    error: Some(crate::adapters::TestError {
+                        message: "<img onerror=alert(1)>".into(),
+                        location: None,
+                    }),
+                }],
+            }],
+            duration: Duration::ZERO,
+            raw_exit_code: 1,
+        };
+        let html = generate_html(&result, &HtmlConfig::default());
+        assert!(!html.contains("<img onerror"));
+        assert!(html.contains("&lt;img"));
+    }
+
+    #[test]
+    fn html_dark_mode_colors() {
+        let config = HtmlConfig {
+            dark_mode: true,
+            ..Default::default()
+        };
+        let html = generate_html(&make_result(), &config);
+        assert!(html.contains("#1e1e2e")); // dark bg
+        assert!(html.contains("#cdd6f4")); // dark fg
+    }
+
+    #[test]
+    fn html_light_mode_colors() {
+        let config = HtmlConfig {
+            dark_mode: false,
+            ..Default::default()
+        };
+        let html = generate_html(&make_result(), &config);
+        assert!(html.contains("#f8f9fa")); // light bg
+        assert!(html.contains("#212529")); // light fg
+    }
+
+    #[test]
+    fn html_passing_suite_not_auto_expanded() {
+        let result = TestRunResult {
+            suites: vec![TestSuite {
+                name: "good".into(),
+                tests: vec![make_test("t1", TestStatus::Passed, 1)],
+            }],
+            duration: Duration::ZERO,
+            raw_exit_code: 0,
+        };
+        let html = generate_html(&result, &HtmlConfig::default());
+        // Passing suite should NOT have 'open' attribute
+        assert!(!html.contains("<details open>"));
+        assert!(html.contains("<details>"));
+    }
+
+    #[test]
+    fn html_failed_suite_auto_expanded() {
+        let html = generate_html(&make_result(), &HtmlConfig::default());
+        assert!(html.contains("<details open>"));
+    }
+
+    #[test]
+    fn html_no_slowest_section() {
+        let config = HtmlConfig {
+            show_slowest: 0,
+            ..Default::default()
+        };
+        let html = generate_html(&make_result(), &config);
+        assert!(!html.contains("Slowest Tests"));
+    }
+
+    #[test]
+    fn html_progress_bar_percentages() {
+        let result = TestRunResult {
+            suites: vec![TestSuite {
+                name: "s".into(),
+                tests: vec![
+                    make_test("p1", TestStatus::Passed, 1),
+                    make_test("p2", TestStatus::Passed, 1),
+                    make_failed_test("f1", 1, "err"),
+                    make_test("s1", TestStatus::Skipped, 0),
+                ],
+            }],
+            duration: Duration::ZERO,
+            raw_exit_code: 1,
+        };
+        let html = generate_html(&result, &HtmlConfig::default());
+        // 50% pass, 25% fail, 25% skip
+        assert!(html.contains("50.0%"));
+        assert!(html.contains("25.0%"));
+    }
+
+    #[test]
+    fn html_100_percent_pass() {
+        let result = TestRunResult {
+            suites: vec![TestSuite {
+                name: "s".into(),
+                tests: vec![make_test("t", TestStatus::Passed, 1)],
+            }],
+            duration: Duration::ZERO,
+            raw_exit_code: 0,
+        };
+        let html = generate_html(&result, &HtmlConfig::default());
+        assert!(html.contains("100.0%"));
+        assert!(!html.contains("class=\"fail\""));
+        assert!(!html.contains("class=\"skip\""));
+    }
+
+    #[test]
+    fn html_exit_code_displayed() {
+        let result = TestRunResult {
+            suites: vec![],
+            duration: Duration::ZERO,
+            raw_exit_code: 42,
+        };
+        let html = generate_html(&result, &HtmlConfig::default());
+        assert!(html.contains("Exit code: 42"));
+    }
+
+    #[test]
+    fn html_duration_format_sub_ms() {
+        assert_eq!(format_duration(Duration::ZERO), "<1ms");
+    }
+
+    #[test]
+    fn html_duration_format_ms() {
+        assert_eq!(format_duration(Duration::from_millis(42)), "42ms");
+    }
+
+    #[test]
+    fn html_duration_format_seconds() {
+        assert_eq!(format_duration(Duration::from_millis(1500)), "1.50s");
+    }
+
+    #[test]
+    fn html_plugin_on_event_is_noop() {
+        let mut r = HtmlReporter::new(HtmlConfig::default());
+        assert!(
+            r.on_event(&crate::events::TestEvent::Warning {
+                message: "x".into()
+            })
+            .is_ok()
+        );
+        assert!(r.output().is_empty());
+    }
+
+    #[test]
+    fn html_plugin_shutdown() {
+        let mut r = HtmlReporter::new(HtmlConfig::default());
+        assert!(r.shutdown().is_ok());
+    }
+
+    #[test]
+    fn html_error_location_displayed() {
+        let html = generate_html(&make_result(), &HtmlConfig::default());
+        assert!(html.contains("test.rs:10"));
+    }
+
+    #[test]
+    fn html_many_suites_all_shown() {
+        let suites: Vec<TestSuite> = (0..10)
+            .map(|i| TestSuite {
+                name: format!("suite_{i}"),
+                tests: vec![make_test(&format!("t_{i}"), TestStatus::Passed, 1)],
+            })
+            .collect();
+        let result = TestRunResult {
+            suites,
+            duration: Duration::from_millis(50),
+            raw_exit_code: 0,
+        };
+        let html = generate_html(&result, &HtmlConfig::default());
+        for i in 0..10 {
+            assert!(html.contains(&format!("suite_{i}")));
+        }
+    }
+
+    #[test]
+    fn html_ampersand_in_test_name() {
+        let result = TestRunResult {
+            suites: vec![TestSuite {
+                name: "s".into(),
+                tests: vec![make_test("a & b", TestStatus::Passed, 1)],
+            }],
+            duration: Duration::ZERO,
+            raw_exit_code: 0,
+        };
+        let html = generate_html(&result, &HtmlConfig::default());
+        assert!(html.contains("a &amp; b"));
+        assert!(!html.contains("a & b"));
     }
 }

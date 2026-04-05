@@ -4,7 +4,6 @@ use std::process;
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use colored::Colorize;
-use wait_timeout::ChildExt;
 
 use testx::{config::Config, detection, output};
 
@@ -175,6 +174,9 @@ enum Commands {
         /// Filter to specific languages (comma-separated, e.g., "rust,python")
         #[arg(long)]
         filter: Option<String>,
+        /// Include directories that are normally skipped (e.g., "packages,vendor")
+        #[arg(long)]
+        include: Option<String>,
         /// Only list discovered projects, don't run tests
         #[arg(long)]
         list: bool,
@@ -206,11 +208,10 @@ enum HistoryView {
 }
 
 fn main() {
-    // Respect NO_COLOR, CI, and TERM=dumb for disabling colors
-    if std::env::var_os("NO_COLOR").is_some()
-        || std::env::var("CI").is_ok()
-        || std::env::var("TERM").as_deref() == Ok("dumb")
-    {
+    // Respect NO_COLOR convention and TERM=dumb for disabling colors.
+    // CI environments often support ANSI colors (GitHub Actions, GitLab CI),
+    // so we don't disable on CI=true — users can set NO_COLOR=1 if needed.
+    if std::env::var_os("NO_COLOR").is_some() || std::env::var("TERM").as_deref() == Ok("dumb") {
         colored::control::set_override(false);
     }
 
@@ -354,6 +355,7 @@ args = []
             sequential,
             fail_fast,
             filter,
+            include,
             list,
             args: ws_args,
         } => {
@@ -373,6 +375,10 @@ args = []
                 .map(|f| f.split(',').map(|s| s.trim().to_string()).collect())
                 .unwrap_or_default();
 
+            let include_dirs: Vec<String> = include
+                .map(|i| i.split(',').map(|s| s.trim().to_string()).collect())
+                .unwrap_or_default();
+
             let ws_config = WorkspaceConfig {
                 max_depth,
                 parallel: !sequential,
@@ -380,6 +386,7 @@ args = []
                 fail_fast,
                 filter_languages,
                 skip_dirs: Vec::new(),
+                include_dirs,
             };
 
             println!(
@@ -449,7 +456,10 @@ args = []
             match cli.output {
                 OutputFormat::Json => {
                     let json = workspace::workspace_report_json(&report);
-                    println!("{}", serde_json::to_string_pretty(&json).unwrap());
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&json).unwrap_or_else(|_| "{}".into())
+                    );
                 }
                 _ => {
                     println!("{}", workspace::format_workspace_report(&report));
@@ -457,7 +467,7 @@ args = []
             }
 
             if report.projects_failed > 0 {
-                process::exit(1);
+                anyhow::bail!("workspace tests failed");
             }
             Ok(())
         }
@@ -611,12 +621,79 @@ args = []
                 }
 
                 let start = std::time::Instant::now();
-                let cmd_output = cmd.output().context("Failed to execute test command")?;
-                let elapsed = start.elapsed();
 
-                let stdout = String::from_utf8_lossy(&cmd_output.stdout).into_owned();
-                let stderr = String::from_utf8_lossy(&cmd_output.stderr).into_owned();
-                let exit_code = cmd_output.status.code().unwrap_or(1);
+                // Use the global timeout (if set) for each stress iteration
+                let iter_timeout = cli.timeout.map(std::time::Duration::from_secs);
+
+                let (stdout, stderr, exit_code, timed_out) = if let Some(timeout_dur) = iter_timeout
+                {
+                    use std::io::Read;
+                    // On Unix, use process group so we can kill grandchildren on timeout
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::process::CommandExt;
+                        unsafe {
+                            cmd.pre_exec(|| {
+                                if libc::setpgid(0, 0) != 0 {
+                                    return Err(std::io::Error::last_os_error());
+                                }
+                                Ok(())
+                            });
+                        }
+                    }
+                    let mut child = cmd
+                        .stdout(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::piped())
+                        .spawn()
+                        .context("Failed to spawn test command")?;
+
+                    // Poll for completion with timeout
+                    let deadline = start + timeout_dur;
+                    loop {
+                        match child.try_wait() {
+                            Ok(Some(status)) => {
+                                let mut out = String::new();
+                                let mut err = String::new();
+                                if let Some(mut pipe) = child.stdout.take() {
+                                    let _ = pipe.read_to_string(&mut out);
+                                }
+                                if let Some(mut pipe) = child.stderr.take() {
+                                    let _ = pipe.read_to_string(&mut err);
+                                }
+                                break (out, err, status.code().unwrap_or(1), false);
+                            }
+                            Ok(None) => {
+                                if std::time::Instant::now() >= deadline {
+                                    // Kill the entire process group
+                                    #[cfg(unix)]
+                                    {
+                                        let pid = child.id() as libc::pid_t;
+                                        unsafe {
+                                            libc::kill(-pid, libc::SIGKILL);
+                                        }
+                                    }
+                                    #[cfg(not(unix))]
+                                    {
+                                        let _ = child.kill();
+                                    }
+                                    let _ = child.wait();
+                                    break (String::new(), String::new(), 124, true);
+                                }
+                                std::thread::sleep(std::time::Duration::from_millis(50));
+                            }
+                            Err(e) => {
+                                anyhow::bail!("Failed to wait for test process: {}", e);
+                            }
+                        }
+                    }
+                } else {
+                    let cmd_output = cmd.output().context("Failed to execute test command")?;
+                    let out = String::from_utf8_lossy(&cmd_output.stdout).into_owned();
+                    let err = String::from_utf8_lossy(&cmd_output.stderr).into_owned();
+                    (out, err, cmd_output.status.code().unwrap_or(1), false)
+                };
+
+                let elapsed = start.elapsed();
 
                 let mut result = adapter.parse_output(&stdout, &stderr, exit_code);
                 if result.duration.as_millis() == 0 {
@@ -624,7 +701,13 @@ args = []
                 }
 
                 let passed = result.is_success();
-                if passed {
+                if timed_out {
+                    eprintln!(
+                        " {} ({:.1}ms)",
+                        "TIMEOUT".yellow().bold(),
+                        elapsed.as_secs_f64() * 1000.0
+                    );
+                } else if passed {
                     eprintln!(
                         " {} ({:.1}ms)",
                         "PASS".green().bold(),
@@ -650,17 +733,18 @@ args = []
             if matches!(cli.output, OutputFormat::Json) {
                 println!(
                     "{}",
-                    serde_json::to_string_pretty(&stress_report_json(&report)).unwrap()
+                    serde_json::to_string_pretty(&stress_report_json(&report))
+                        .unwrap_or_else(|_| "{}".into())
                 );
             } else {
                 println!("{}", format_stress_report(&report));
             }
 
             if report.threshold_passed == Some(false) {
-                process::exit(1);
+                anyhow::bail!("stress test threshold not met");
             }
             if !report.all_passed {
-                process::exit(1);
+                anyhow::bail!("stress test failed");
             }
             Ok(())
         }
@@ -749,6 +833,53 @@ args = []
                 println!("  {}", name);
             }
             println!();
+
+            // Build a filter from the selected tests and execute
+            let filter_pattern = selected
+                .iter()
+                .map(|s| regex_syntax_escape(s))
+                .collect::<Vec<_>>()
+                .join("|");
+
+            let mut run_args = extra_args.clone();
+            run_args.extend(adapter.filter_args(&filter_pattern));
+
+            let mut run_cmd = adapter
+                .build_command(&project_dir, &run_args)
+                .context("Failed to build filtered test command")?;
+            for (key, value) in &config.env {
+                run_cmd.env(key, value);
+            }
+
+            let run_output = run_cmd
+                .output()
+                .context("Failed to execute selected tests")?;
+
+            let run_stdout = String::from_utf8_lossy(&run_output.stdout).into_owned();
+            let run_stderr = String::from_utf8_lossy(&run_output.stderr).into_owned();
+            let run_exit = run_output.status.code().unwrap_or(1);
+
+            let run_result = adapter.parse_output(&run_stdout, &run_stderr, run_exit);
+
+            // Display results
+            match cli.output {
+                OutputFormat::Pretty => {
+                    output::print_results(&run_result);
+                }
+                OutputFormat::Json => {
+                    output::print_json(&run_result);
+                }
+                OutputFormat::Junit => {
+                    output::print_junit_xml(&run_result);
+                }
+                OutputFormat::Tap => {
+                    output::print_tap(&run_result);
+                }
+            }
+
+            if !run_result.is_success() {
+                anyhow::bail!("tests failed");
+            }
 
             Ok(())
         }
@@ -997,52 +1128,7 @@ args = []
 
             let start = std::time::Instant::now();
 
-            let (stdout, stderr, exit_code) = if let Some(secs) = timeout_secs {
-                // Spawn with timeout
-                let mut child = cmd
-                    .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::piped())
-                    .spawn()
-                    .context("Failed to execute test command. Is the test runner installed?")?;
-
-                let timeout_dur = std::time::Duration::from_secs(secs);
-                match child.wait_timeout(timeout_dur) {
-                    Ok(Some(status)) => {
-                        let mut stdout_buf = Vec::new();
-                        let mut stderr_buf = Vec::new();
-                        if let Some(mut out) = child.stdout.take() {
-                            std::io::Read::read_to_end(&mut out, &mut stdout_buf).ok();
-                        }
-                        if let Some(mut err) = child.stderr.take() {
-                            std::io::Read::read_to_end(&mut err, &mut stderr_buf).ok();
-                        }
-                        (
-                            String::from_utf8_lossy(&stdout_buf).into_owned(),
-                            String::from_utf8_lossy(&stderr_buf).into_owned(),
-                            status.code().unwrap_or(1),
-                        )
-                    }
-                    Ok(None) => {
-                        // Timeout — kill the process
-                        child.kill().ok();
-                        child.wait().ok();
-                        eprintln!("{} Test timed out after {}s", "✗".red().bold(), secs,);
-                        (String::new(), format!("Timed out after {}s", secs), 124)
-                    }
-                    Err(e) => {
-                        anyhow::bail!("Failed waiting for test process: {e}");
-                    }
-                }
-            } else {
-                let output = cmd
-                    .output()
-                    .context("Failed to execute test command. Is the test runner installed?")?;
-                (
-                    String::from_utf8_lossy(&output.stdout).into_owned(),
-                    String::from_utf8_lossy(&output.stderr).into_owned(),
-                    output.status.code().unwrap_or(1),
-                )
-            };
+            let (stdout, stderr, exit_code) = execute_with_timeout(cmd, timeout_secs)?;
 
             let elapsed = start.elapsed();
 
@@ -1118,7 +1204,7 @@ args = []
             // --- Retry failed tests (--retries) ---
             let mut retries_fixed = 0;
             if retries > 0 && result.total_failed() > 0 && !fail_fast {
-                use testx::retry::{RetryConfig, merge_retry_result};
+                use testx::retry::{RetryConfig, extract_failed_tests, merge_retry_result};
 
                 let retry_cfg = RetryConfig::new(retries);
 
@@ -1127,19 +1213,33 @@ args = []
                         break;
                     }
 
+                    // Extract failed test names for filtered retry
+                    let failed_tests = extract_failed_tests(&result);
+
                     if matches!(cli.output, OutputFormat::Pretty) {
                         eprintln!(
                             "  {} Retry {}/{} — {} failed test(s)...",
                             "↻".yellow().bold(),
                             attempt,
                             retry_cfg.max_retries,
-                            result.total_failed()
+                            failed_tests.len()
                         );
                     }
 
-                    // Re-run the same command
+                    // Build the retry command with a filter for failed tests only
+                    let mut retry_args = extra_args.clone();
+                    if retry_cfg.retry_failed_only && !failed_tests.is_empty() {
+                        let filter_pattern = failed_tests
+                            .iter()
+                            .map(|f| regex_syntax_escape(&f.test_name))
+                            .collect::<Vec<_>>()
+                            .join("|");
+                        // Inject framework-appropriate filter flag
+                        retry_args.extend(adapter.filter_args(&filter_pattern));
+                    }
+
                     let mut retry_cmd = adapter
-                        .build_command(&project_dir, &extra_args)
+                        .build_command(&project_dir, &retry_args)
                         .context("Failed to build retry command")?;
                     for (key, value) in &config.env {
                         retry_cmd.env(key, value);
@@ -1249,6 +1349,37 @@ args = []
                 }
             }
 
+            // --- Coverage: collect and display coverage results ---
+            if coverage_enabled {
+                let adapter_lower = adapter.name().to_lowercase();
+                if let Some(coverage_result) = collect_coverage(&project_dir, &adapter_lower) {
+                    if matches!(cli.output, OutputFormat::Pretty) {
+                        print!(
+                            "{}",
+                            testx::coverage::display::format_coverage_summary(&coverage_result)
+                        );
+                    }
+
+                    // Check threshold from config
+                    let cov_config = config.coverage_config();
+                    if let Some(threshold) = cov_config.threshold
+                        && !coverage_result.meets_threshold(threshold)
+                    {
+                        eprintln!(
+                            "  {} Coverage {:.1}% is below threshold {:.1}%",
+                            "✗".red().bold(),
+                            coverage_result.percentage,
+                            threshold
+                        );
+                        anyhow::bail!(
+                            "coverage below threshold ({:.1}% < {:.1}%)",
+                            coverage_result.percentage,
+                            threshold
+                        );
+                    }
+                }
+            }
+
             match cli.output {
                 OutputFormat::Pretty => {
                     output::print_results(&result);
@@ -1274,10 +1405,218 @@ args = []
             }
 
             if !result.is_success() {
-                process::exit(1);
+                anyhow::bail!("tests failed");
             }
 
             Ok(())
         }
+    }
+}
+
+/// Escape regex metacharacters in a test name so it can be used as a literal filter.
+fn regex_syntax_escape(s: &str) -> String {
+    let mut escaped = String::with_capacity(s.len());
+    for c in s.chars() {
+        if matches!(
+            c,
+            '.' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | '^' | '$' | '\\'
+        ) {
+            escaped.push('\\');
+        }
+        escaped.push(c);
+    }
+    escaped
+}
+
+/// Try to find and parse coverage output files for the given adapter.
+fn collect_coverage(
+    project_dir: &std::path::Path,
+    adapter: &str,
+) -> Option<testx::coverage::CoverageResult> {
+    use testx::coverage::parsers::{cobertura, go_cover, jacoco, lcov};
+
+    // Try known coverage output paths in order of likelihood per adapter
+    let candidates: Vec<(&str, &[&str])> = vec![
+        (
+            "lcov",
+            &[
+                "lcov.info",
+                "coverage.lcov",
+                "coverage/lcov.info",
+                "target/llvm-cov/lcov.info",
+            ] as &[&str],
+        ),
+        (
+            "cobertura",
+            &[
+                "coverage.xml",
+                "coverage/coverage.xml",
+                "htmlcov/coverage.xml",
+            ],
+        ),
+        ("go_cover", &["coverage.out", "cover.out"]),
+        (
+            "jacoco",
+            &[
+                "target/site/jacoco/jacoco.xml",
+                "build/reports/jacoco/test/jacocoTestReport.xml",
+            ],
+        ),
+    ];
+
+    // Prioritize format by adapter
+    let preferred_order: &[&str] = match adapter {
+        "rust" => &["lcov"],
+        "go" => &["go_cover"],
+        "java" => &["jacoco", "cobertura"],
+        "python" => &["cobertura", "lcov"],
+        "javascript" => &["lcov", "cobertura"],
+        _ => &["lcov", "cobertura", "go_cover", "jacoco"],
+    };
+
+    for &preferred in preferred_order {
+        if let Some((_, paths)) = candidates.iter().find(|(fmt, _)| *fmt == preferred) {
+            for path in *paths {
+                let full_path = project_dir.join(path);
+                if full_path.exists()
+                    && let Ok(content) = std::fs::read_to_string(&full_path)
+                {
+                    let result = match preferred {
+                        "lcov" => lcov::parse_lcov(&content),
+                        "cobertura" => cobertura::parse_cobertura(&content),
+                        "go_cover" => go_cover::parse_go_cover(&content),
+                        "jacoco" => jacoco::parse_jacoco(&content),
+                        _ => continue,
+                    };
+                    if !result.files.is_empty() {
+                        return Some(result);
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Execute a command with an optional timeout, draining stdout/stderr concurrently.
+fn execute_with_timeout(
+    mut cmd: std::process::Command,
+    timeout_secs: Option<u64>,
+) -> anyhow::Result<(String, String, i32)> {
+    if let Some(secs) = timeout_secs {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            unsafe {
+                cmd.pre_exec(|| {
+                    if libc::setpgid(0, 0) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+        }
+        let mut child = cmd
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .context("Failed to execute test command. Is the test runner installed?")?;
+
+        let child_stdout = child.stdout.take();
+        let child_stderr = child.stderr.take();
+
+        let stdout_handle = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut out) = child_stdout {
+                std::io::Read::read_to_end(&mut out, &mut buf).ok();
+            }
+            buf
+        });
+
+        let stderr_handle = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut err) = child_stderr {
+                std::io::Read::read_to_end(&mut err, &mut buf).ok();
+            }
+            buf
+        });
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let wait_handle = std::thread::spawn(move || {
+            let status = child.wait();
+            let _ = tx.send(());
+            (child, status)
+        });
+
+        let timeout_dur = std::time::Duration::from_secs(secs);
+        if rx.recv_timeout(timeout_dur).is_ok() {
+            let joined = wait_handle.join();
+            let stdout_buf = match stdout_handle.join() {
+                Ok(buf) => buf,
+                Err(_) => {
+                    eprintln!("warning: stdout reader thread panicked");
+                    Vec::new()
+                }
+            };
+            let stderr_buf = match stderr_handle.join() {
+                Ok(buf) => buf,
+                Err(_) => {
+                    eprintln!("warning: stderr reader thread panicked");
+                    Vec::new()
+                }
+            };
+            match joined {
+                Ok((_child, status)) => {
+                    let code = status.map(|s| s.code().unwrap_or(1)).unwrap_or(1);
+                    Ok((
+                        String::from_utf8_lossy(&stdout_buf).into_owned(),
+                        String::from_utf8_lossy(&stderr_buf).into_owned(),
+                        code,
+                    ))
+                }
+                Err(_) => {
+                    eprintln!("internal error: wait thread panicked");
+                    Ok((
+                        String::from_utf8_lossy(&stdout_buf).into_owned(),
+                        String::from_utf8_lossy(&stderr_buf).into_owned(),
+                        1,
+                    ))
+                }
+            }
+        } else {
+            match wait_handle.join() {
+                Ok((mut child, _)) => {
+                    #[cfg(unix)]
+                    {
+                        let pid = child.id() as libc::pid_t;
+                        unsafe {
+                            libc::kill(-pid, libc::SIGKILL);
+                        }
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        child.kill().ok();
+                    }
+                    child.wait().ok();
+                }
+                Err(_) => {
+                    eprintln!("internal error: wait thread panicked during timeout");
+                }
+            }
+            let _ = stdout_handle.join();
+            let _ = stderr_handle.join();
+            eprintln!("{} Test timed out after {}s", "✗".red().bold(), secs);
+            Ok((String::new(), format!("Timed out after {}s", secs), 124))
+        }
+    } else {
+        let output = cmd
+            .output()
+            .context("Failed to execute test command. Is the test runner installed?")?;
+        Ok((
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+            output.status.code().unwrap_or(1),
+        ))
     }
 }

@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use super::util::duration_from_secs_safe;
+use super::util::{combined_output, duration_from_secs_safe, ensure_non_empty};
 use super::{
     ConfidenceScore, DetectionResult, TestAdapter, TestCase, TestRunResult, TestStatus, TestSuite,
 };
@@ -82,8 +82,12 @@ impl TestAdapter for GoAdapter {
         Ok(cmd)
     }
 
+    fn filter_args(&self, pattern: &str) -> Vec<String> {
+        vec!["-run".to_string(), pattern.to_string()]
+    }
+
     fn parse_output(&self, stdout: &str, stderr: &str, exit_code: i32) -> TestRunResult {
-        let combined = format!("{}\n{}", stdout, stderr);
+        let combined = combined_output(stdout, stderr);
         let failure_messages = parse_go_failures(&combined);
         let mut suites: Vec<TestSuite> = Vec::new();
         let mut current_pkg = String::new();
@@ -177,22 +181,7 @@ impl TestAdapter for GoAdapter {
             });
         }
 
-        if suites.is_empty() {
-            let status = if exit_code == 0 {
-                TestStatus::Passed
-            } else {
-                TestStatus::Failed
-            };
-            suites.push(TestSuite {
-                name: "tests".into(),
-                tests: vec![TestCase {
-                    name: "test_suite".into(),
-                    status,
-                    duration: Duration::from_millis(0),
-                    error: None,
-                }],
-            });
-        }
+        ensure_non_empty(&mut suites, exit_code, "tests");
 
         // Parse total duration from last "ok" or "FAIL" line
         let duration = parse_go_total_duration(&combined).unwrap_or(Duration::from_secs(0));

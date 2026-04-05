@@ -79,10 +79,25 @@ pub fn get_changed_files(project_dir: &Path, mode: &DiffMode) -> Result<Vec<Path
             cmd.args(["diff", "--name-only", "--cached"]);
         }
         DiffMode::Branch(branch) => {
+            // Validate branch name doesn't start with '-' to prevent flag injection
+            if branch.starts_with('-') {
+                return Err(TestxError::ConfigError {
+                    message: format!("Invalid branch name '{}': must not start with '-'", branch),
+                });
+            }
             // Changes between current HEAD and the merge-base with branch
             cmd.args(["diff", "--name-only", &format!("{}...HEAD", branch)]);
         }
         DiffMode::Commit(sha) => {
+            // Validate SHA doesn't start with '-' to prevent flag injection
+            if sha.starts_with('-') {
+                return Err(TestxError::ConfigError {
+                    message: format!(
+                        "Invalid commit reference '{}': must not start with '-'",
+                        sha
+                    ),
+                });
+            }
             cmd.args(["diff", "--name-only", sha, "HEAD"]);
         }
     }
@@ -94,6 +109,32 @@ pub fn get_changed_files(project_dir: &Path, mode: &DiffMode) -> Result<Vec<Path
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
+
+        // On a repo with no commits yet, `git diff HEAD` fails with
+        // "fatal: ambiguous argument 'HEAD'". Fall back to listing all
+        // tracked + untracked files so impact analysis still works on
+        // brand-new repositories.
+        if matches!(mode, DiffMode::Head) && stderr.contains("ambiguous argument 'HEAD'") {
+            // Return all files in the worktree (tracked + untracked)
+            let ls_output = Command::new("git")
+                .current_dir(project_dir)
+                .args(["ls-files", "--others", "--cached", "--exclude-standard"])
+                .output()
+                .map_err(|e| TestxError::IoError {
+                    context: "Failed to run git ls-files fallback".into(),
+                    source: e,
+                })?;
+            let stdout = String::from_utf8_lossy(&ls_output.stdout);
+            let mut files: Vec<PathBuf> = stdout
+                .lines()
+                .filter(|l| !l.is_empty())
+                .map(PathBuf::from)
+                .collect();
+            files.sort();
+            files.dedup();
+            return Ok(files);
+        }
+
         return Err(TestxError::ConfigError {
             message: format!("git diff failed: {}", stderr.trim()),
         });

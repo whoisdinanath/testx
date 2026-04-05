@@ -19,7 +19,7 @@ testx detect
 This shows what testx detected without actually running anything:
 
 ```
-Detected: Python (pytest) — confidence 0.95
+Detected: Python (pytest) — confidence 94%
 ```
 
 ## Pass arguments to the test runner
@@ -60,6 +60,42 @@ testx --raw
 
 # Verbose mode (shows the detected command)
 testx -v
+
+# Watch mode — re-run on file changes
+testx -w
+
+# Retry failed tests 3 times
+testx --retries 3
+```
+
+## Monorepo / workspace
+
+Test all projects in a monorepo:
+
+```bash
+# Discover and run all projects
+testx workspace
+
+# List detected projects
+testx workspace --list
+
+# Filter by language
+testx workspace --filter rust,python
+```
+
+## Test history
+
+Track test health over time:
+
+```bash
+# Quick summary
+testx history
+
+# Flaky test report
+testx history flaky
+
+# Health score dashboard
+testx history health
 ```
 
 ## Next steps
@@ -68,3 +104,5 @@ testx -v
 - [CI sharding](../guide/sharding.md) — split tests across CI nodes
 - [Flaky test detection](../guide/stress-testing.md) — find intermittent failures
 - [Configuration](../guide/configuration.md) — customize with `testx.toml`
+- [Monorepo Support](../guide/workspace.md) — test across multiple projects
+- [Test History](../guide/history.md) — analytics and health tracking

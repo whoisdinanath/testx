@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use super::util::duration_from_secs_safe;
+use super::util::{combined_output, duration_from_secs_safe, truncate};
 use super::{
     ConfidenceScore, DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus,
     TestSuite,
@@ -93,8 +93,12 @@ impl TestAdapter for PhpAdapter {
         Ok(cmd)
     }
 
+    fn filter_args(&self, pattern: &str) -> Vec<String> {
+        vec!["--filter".to_string(), pattern.to_string()]
+    }
+
     fn parse_output(&self, stdout: &str, stderr: &str, exit_code: i32) -> TestRunResult {
-        let combined = format!("{}\n{}", stdout, stderr);
+        let combined = combined_output(stdout, stderr);
 
         // Try verbose --testdox output first, then standard summary
         let mut suites = parse_testdox_output(&combined);
@@ -497,7 +501,7 @@ fn parse_phpunit_failures(output: &str) -> Vec<PhpUnitFailure> {
             if !test_method.is_empty() {
                 failures.push(PhpUnitFailure {
                     test_method,
-                    message: truncate_failure_message(&message_lines.join("\n"), 500),
+                    message: truncate(&message_lines.join("\n"), 500),
                     location,
                 });
             }
@@ -529,15 +533,6 @@ fn is_phpunit_failure_header(line: &str) -> bool {
 fn is_php_file_location(line: &str) -> bool {
     (line.contains(".php:") || line.contains(".php("))
         && (line.starts_with('/') || line.starts_with('\\') || line.contains(":\\"))
-}
-
-/// Truncate a failure message to a maximum length.
-fn truncate_failure_message(msg: &str, max_len: usize) -> String {
-    if msg.len() <= max_len {
-        msg.to_string()
-    } else {
-        format!("{}...", &msg[..max_len])
-    }
 }
 
 /// Enrich test cases with failure details.
@@ -943,11 +938,11 @@ FAILURES!
     }
 
     #[test]
-    fn truncate_failure_message_test() {
-        assert_eq!(truncate_failure_message("short", 100), "short");
+    fn truncate_test() {
+        assert_eq!(truncate("short", 100), "short");
         let long = "a".repeat(600);
-        let truncated = truncate_failure_message(&long, 500);
-        assert_eq!(truncated.len(), 503); // 500 + "..."
+        let truncated = truncate(&long, 500);
+        assert_eq!(truncated.len(), 500);
         assert!(truncated.ends_with("..."));
     }
 

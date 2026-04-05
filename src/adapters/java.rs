@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use super::util::duration_from_secs_safe;
+use super::util::{combined_output, duration_from_secs_safe, has_marker_in_subdirs, truncate};
 use super::{
     ConfidenceScore, DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus,
     TestSuite,
@@ -34,12 +34,65 @@ impl JavaAdapter {
         if project_dir.join("pom.xml").exists() {
             return Some("maven");
         }
+        // Fallback: check subdirectories (multi-module projects)
+        if has_marker_in_subdirs(project_dir, 1, |name| {
+            name == "build.gradle.kts" || name == "build.gradle"
+        }) {
+            return Some("gradle");
+        }
+        if has_marker_in_subdirs(project_dir, 1, |name| name == "pom.xml") {
+            return Some("maven");
+        }
         None
     }
 
     /// Check for Gradle wrapper
     fn has_gradle_wrapper(project_dir: &Path) -> bool {
         project_dir.join("gradlew").exists()
+    }
+
+    /// Find the build file when it's not at root (multi-module project).
+    ///
+    /// Returns None if build files exist at root (tool discovers automatically).
+    /// For Maven, returns path to the pom.xml in a subdirectory.
+    /// For Gradle, returns path to the build.gradle(.kts) in a subdirectory.
+    fn find_build_file(project_dir: &Path) -> Option<std::path::PathBuf> {
+        // If root has build files, tool auto-discovers — no path needed
+        if project_dir.join("pom.xml").exists()
+            || project_dir.join("build.gradle").exists()
+            || project_dir.join("build.gradle.kts").exists()
+        {
+            return None;
+        }
+
+        // Search 1 level of subdirs
+        if let Ok(entries) = std::fs::read_dir(project_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with('.') {
+                    continue;
+                }
+                // Check for build files in this subdirectory
+                let pom = path.join("pom.xml");
+                if pom.exists() {
+                    return Some(pom);
+                }
+                let gradle_kts = path.join("build.gradle.kts");
+                if gradle_kts.exists() {
+                    return Some(gradle_kts);
+                }
+                let gradle = path.join("build.gradle");
+                if gradle.exists() {
+                    return Some(gradle);
+                }
+            }
+        }
+        None
     }
 }
 
@@ -51,17 +104,21 @@ impl TestAdapter for JavaAdapter {
     fn check_runner(&self) -> Option<String> {
         // check_runner() has no access to project_dir, so we can't check for
         // ./gradlew. We check for system-installed tools; build_command will
-        // fall back to ./gradlew if it exists. Only report missing if neither
-        // system gradle nor mvn nor ant are available.
+        // fall back to ./gradlew if it exists.
+        //
+        // Since most Gradle projects use the wrapper (gradlew) and build_command
+        // already handles that fallback, we only warn for Maven projects where
+        // system-wide mvn is genuinely required.
         if which::which("gradle").is_ok()
             || which::which("mvn").is_ok()
             || which::which("ant").is_ok()
         {
             return None;
         }
-        // Note: this may false-positive if the project has a ./gradlew wrapper.
-        // build_command handles that case. We still warn so users know early.
-        Some("gradle, mvn, or ant (or add a ./gradlew wrapper)".into())
+        // Don't warn — the vast majority of Gradle projects ship a ./gradlew
+        // wrapper, and build_command will find it. Reporting "missing" here
+        // would be a false positive for nearly every Gradle project.
+        None
     }
 
     fn detect(&self, project_dir: &Path) -> Option<DetectionResult> {
@@ -101,6 +158,7 @@ impl TestAdapter for JavaAdapter {
 
     fn build_command(&self, project_dir: &Path, extra_args: &[String]) -> Result<Command> {
         let build_tool = Self::detect_build_tool(project_dir).unwrap_or("maven");
+        let subdir_build_file = Self::find_build_file(project_dir);
 
         let mut cmd;
 
@@ -112,12 +170,28 @@ impl TestAdapter for JavaAdapter {
                     cmd = Command::new("gradle");
                 }
                 cmd.arg("test");
+                // Gradle: pass -b <build-file> for subdir projects
+                if let Some(ref build_file) = subdir_build_file
+                    && build_file
+                        .file_name()
+                        .is_some_and(|n| n.to_string_lossy().starts_with("build.gradle"))
+                {
+                    cmd.arg("-b");
+                    cmd.arg(build_file);
+                }
             }
             _ => {
                 // Maven
                 cmd = Command::new("mvn");
                 cmd.arg("test");
                 cmd.arg("-B"); // batch mode (no interactive)
+                // Maven: pass -f <pom-path> for subdir projects
+                if let Some(ref build_file) = subdir_build_file
+                    && build_file.file_name().is_some_and(|n| n == "pom.xml")
+                {
+                    cmd.arg("-f");
+                    cmd.arg(build_file);
+                }
             }
         }
 
@@ -129,8 +203,13 @@ impl TestAdapter for JavaAdapter {
         Ok(cmd)
     }
 
+    fn filter_args(&self, pattern: &str) -> Vec<String> {
+        // Maven/Gradle both accept -Dtest=pattern
+        vec![format!("-Dtest={}", pattern)]
+    }
+
     fn parse_output(&self, stdout: &str, stderr: &str, exit_code: i32) -> TestRunResult {
-        let combined = format!("{}\n{}", stdout, stderr);
+        let combined = combined_output(stdout, stderr);
 
         // Try Maven Surefire parsing first, then Gradle
         let mut suites = if combined.contains("Tests run:") {
@@ -647,7 +726,7 @@ fn parse_gradle_failures(output: &str) -> Vec<JavaTestFailure> {
             failures.push(JavaTestFailure {
                 test_name,
                 method_name,
-                message: truncate_java_message(&message, 500),
+                message: truncate(&message, 500),
                 stack_trace,
             });
             continue;
@@ -700,7 +779,7 @@ fn parse_maven_error_failures(output: &str) -> Vec<JavaTestFailure> {
                     failures.push(JavaTestFailure {
                         test_name: test_ref.to_string(),
                         method_name,
-                        message: truncate_java_message(&message, 500),
+                        message: truncate(&message, 500),
                         stack_trace: None,
                     });
                 }
@@ -773,15 +852,6 @@ fn find_matching_java_failure<'a>(
         return Some(&failures[0]);
     }
     None
-}
-
-/// Truncate a message to max length.
-fn truncate_java_message(msg: &str, max_len: usize) -> String {
-    if msg.len() <= max_len {
-        msg.to_string()
-    } else {
-        format!("{}...", &msg[..max_len])
-    }
 }
 
 /// Parse Surefire XML test report files from standard locations.
@@ -937,13 +1007,19 @@ fn find_self_closing_end(content: &str, from: usize) -> Option<usize> {
 fn extract_xml_attr(content: &str, tag: &str, attr: &str) -> Option<String> {
     let tag_start = content.find(&format!("<{}", tag))?;
     let tag_content = &content[tag_start..];
-    let tag_end = tag_content.find('>')?.min(tag_content.len());
+    let tag_end = tag_content.find('>')?;
     let tag_text = &tag_content[..tag_end];
 
     let attr_pattern = format!("{}=\"", attr);
     let attr_start = tag_text.find(&attr_pattern)?;
     let value_start = attr_start + attr_pattern.len();
+    if value_start >= tag_text.len() {
+        return None;
+    }
     let value_end = tag_text[value_start..].find('"')?;
+    if value_start + value_end > tag_text.len() {
+        return None;
+    }
     Some(tag_text[value_start..value_start + value_end].to_string())
 }
 
@@ -1277,12 +1353,12 @@ com.example.Test > methodB FAILED
     }
 
     #[test]
-    fn truncate_java_message_test() {
-        assert_eq!(truncate_java_message("short", 100), "short");
+    fn truncate_test() {
+        assert_eq!(truncate("short", 100), "short");
         let long = "x".repeat(600);
-        let truncated = truncate_java_message(&long, 500);
+        let truncated = truncate(&long, 500);
         assert!(truncated.ends_with("..."));
-        assert_eq!(truncated.len(), 503);
+        assert_eq!(truncated.len(), 500);
     }
 
     #[test]

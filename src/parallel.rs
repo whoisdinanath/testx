@@ -482,7 +482,7 @@ pub fn is_balanced(partitions: &[WorkPartition]) -> bool {
     }
 
     // Balanced if the max worker has no more than 2x the min (or min+2 for small counts)
-    max <= min * 2 + 2
+    max <= min.saturating_mul(2).saturating_add(2)
 }
 
 /// Rebalance partitions that are too skewed.

@@ -1,10 +1,10 @@
-use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::adapters::TestRunResult;
 use crate::error::{Result, TestxError};
+use crate::hash::StableHasher;
 
 /// Directory name for the cache store.
 const CACHE_DIR: &str = ".testx";
@@ -101,6 +101,22 @@ impl CacheStore {
     /// Save cache to disk.
     pub fn save(&self, project_dir: &Path) -> Result<()> {
         let cache_dir = project_dir.join(CACHE_DIR);
+
+        // Guard against symlink-based cache poisoning: if .testx is a symlink,
+        // refuse to write through it.
+        if cache_dir.exists() && cache_dir.read_link().is_ok() {
+            return Err(TestxError::IoError {
+                context: format!(
+                    "Cache directory is a symlink (possible symlink attack): {}",
+                    cache_dir.display()
+                ),
+                source: std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "symlink in cache path",
+                ),
+            });
+        }
+
         if !cache_dir.exists() {
             std::fs::create_dir_all(&cache_dir).map_err(|e| TestxError::IoError {
                 context: format!("Failed to create cache directory: {}", cache_dir.display()),
@@ -109,6 +125,20 @@ impl CacheStore {
         }
 
         let cache_path = cache_dir.join(CACHE_FILE);
+
+        // Also check if the cache file itself is a symlink
+        if cache_path.exists() && cache_path.read_link().is_ok() {
+            return Err(TestxError::IoError {
+                context: format!(
+                    "Cache file is a symlink (possible symlink attack): {}",
+                    cache_path.display()
+                ),
+                source: std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "symlink in cache path",
+                ),
+            });
+        }
         let content = serde_json::to_string_pretty(self).map_err(|e| TestxError::ConfigError {
             message: format!("Failed to serialize cache: {}", e),
         })?;
@@ -176,7 +206,7 @@ impl Default for CacheStore {
 /// This walks the project directory, collecting file modification times and sizes
 /// for relevant source files, then produces a combined hash.
 pub fn compute_project_hash(project_dir: &Path, adapter_name: &str) -> Result<String> {
-    let mut hasher = DefaultHasher::new();
+    let mut hasher = StableHasher::new();
 
     // Hash the adapter name so different adapters have different cache keys
     adapter_name.hash(&mut hasher);

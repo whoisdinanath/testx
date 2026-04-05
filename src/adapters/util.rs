@@ -1,10 +1,11 @@
-use std::process::Command;
+use std::path::Path;
 use std::time::Duration;
 
 use crate::adapters::{DetectionResult, TestCase, TestError, TestRunResult, TestStatus, TestSuite};
 
 /// Create a Duration from seconds, returning Duration::ZERO for NaN, infinity, or negative values.
 /// This is a safe wrapper around `Duration::from_secs_f64` which panics on such inputs.
+#[inline]
 pub fn duration_from_secs_safe(secs: f64) -> Duration {
     if secs.is_finite() && secs >= 0.0 {
         Duration::from_secs_f64(secs)
@@ -24,6 +25,44 @@ pub fn combined_output(stdout: &str, stderr: &str) -> String {
         return stdout.to_string();
     }
     format!("{}\n{}", stdout, stderr)
+}
+
+/// Ensure a suite list is non-empty by adding a fallback suite based on exit code.
+///
+/// Replaces the identical 13-copy pattern:
+/// ```ignore
+/// if suites.is_empty() {
+///     suites.push(TestSuite { name: "tests".into(), tests: vec![...] });
+/// }
+/// ```
+pub fn ensure_non_empty(suites: &mut Vec<TestSuite>, exit_code: i32, suite_name: &str) {
+    if !suites.is_empty() {
+        return;
+    }
+    let status = if exit_code == 0 {
+        TestStatus::Passed
+    } else {
+        TestStatus::Failed
+    };
+    suites.push(TestSuite {
+        name: suite_name.into(),
+        tests: vec![TestCase {
+            name: "test_suite".into(),
+            status,
+            duration: Duration::ZERO,
+            error: None,
+        }],
+    });
+}
+
+/// Truncate a string to a max length, adding "..." if truncated.
+pub fn truncate(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        let end = s.floor_char_boundary(max_len.saturating_sub(3));
+        format!("{}...", &s[..end])
+    }
 }
 
 /// Build a fallback TestRunResult when output can't be parsed into individual tests.
@@ -78,6 +117,75 @@ pub struct SummaryPatterns {
     pub passed: &'static [&'static str],
     pub failed: &'static [&'static str],
     pub skipped: &'static [&'static str],
+}
+
+/// Check if any file matching `predicate` exists in immediate subdirectories of `dir`.
+///
+/// This enables detection of projects where the build/config file is one or two
+/// levels below the project root (e.g., .NET projects with `Src/*.csproj`,
+/// Java multi-module projects, etc.).
+///
+/// Only scans direct children that are directories. Skips hidden directories
+/// and common non-project directories (node_modules, vendor, target, etc.).
+pub fn has_marker_in_subdirs<F>(dir: &Path, max_depth: u8, predicate: F) -> bool
+where
+    F: Fn(&str) -> bool,
+{
+    has_marker_in_subdirs_inner(dir, max_depth, 0, &predicate)
+}
+
+fn has_marker_in_subdirs_inner<F>(
+    dir: &Path,
+    max_depth: u8,
+    current_depth: u8,
+    predicate: &F,
+) -> bool
+where
+    F: Fn(&str) -> bool,
+{
+    if current_depth > max_depth {
+        return false;
+    }
+
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return false,
+    };
+
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+
+        // Skip hidden and non-project dirs when descending
+        if current_depth < max_depth && entry.file_type().is_ok_and(|t| t.is_dir()) {
+            if name_str.starts_with('.')
+                || matches!(
+                    name_str.as_ref(),
+                    "node_modules"
+                        | "vendor"
+                        | "target"
+                        | "build"
+                        | "bin"
+                        | "obj"
+                        | "_build"
+                        | "deps"
+                        | "__pycache__"
+                )
+            {
+                continue;
+            }
+            if has_marker_in_subdirs_inner(&entry.path(), max_depth, current_depth + 1, predicate) {
+                return true;
+            }
+        }
+
+        // Check files at this level
+        if entry.file_type().is_ok_and(|t| t.is_file()) && predicate(&name_str) {
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Parsed summary counts from a test result line.
@@ -241,8 +349,8 @@ pub fn build_test_command(
     project_dir: &std::path::Path,
     base_args: &[&str],
     extra_args: &[String],
-) -> Command {
-    let mut cmd = Command::new(program);
+) -> std::process::Command {
+    let mut cmd = std::process::Command::new(program);
     for arg in base_args {
         cmd.arg(arg);
     }
@@ -255,11 +363,24 @@ pub fn build_test_command(
 
 /// Escape a string for safe XML output.
 pub fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
+    // Strip control characters (U+0000–U+001F except TAB, LF, CR) which are
+    // illegal in XML 1.0. Keep \t (0x09), \n (0x0A), \r (0x0D).
+    // Single-pass implementation avoids multiple allocations from chained .replace().
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c.is_control() && c != '\t' && c != '\n' && c != '\r' {
+            continue; // strip illegal XML control chars
+        }
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 /// Format a Duration as a human-readable string.
@@ -279,20 +400,11 @@ pub fn format_duration(d: Duration) -> String {
     }
 }
 
-/// Truncate a string to a max length, adding "..." if truncated.
-pub fn truncate(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max_len.saturating_sub(3)])
-    }
-}
-
 /// Extract error context from output lines around a failure.
 /// Scans for common failure indicators and returns surrounding context.
 pub fn extract_error_context(output: &str, max_lines: usize) -> Option<String> {
     let lines: Vec<&str> = output.lines().collect();
-    let error_indicators = [
+    const ERROR_INDICATORS: &[&str] = &[
         "FAILED",
         "FAIL:",
         "Error:",
@@ -308,12 +420,10 @@ pub fn extract_error_context(output: &str, max_lines: usize) -> Option<String> {
     ];
 
     for (i, line) in lines.iter().enumerate() {
-        for indicator in &error_indicators {
-            if line.contains(indicator) {
-                let start = i.saturating_sub(2);
-                let end = (i + max_lines).min(lines.len());
-                return Some(lines[start..end].join("\n"));
-            }
+        if ERROR_INDICATORS.iter().any(|ind| line.contains(ind)) {
+            let start = i.saturating_sub(2);
+            let end = (i + max_lines).min(lines.len());
+            return Some(lines[start..end].join("\n"));
         }
     }
 
@@ -658,6 +768,29 @@ mod tests {
     #[test]
     fn truncate_exact_length() {
         assert_eq!(truncate("hello", 5), "hello");
+    }
+
+    #[test]
+    fn truncate_multibyte_utf8() {
+        // "café" is 5 bytes (é = 2 bytes). Truncating at byte 4 would split é.
+        // Must not panic.
+        let result = truncate("café latte", 7);
+        assert!(result.ends_with("..."));
+        assert!(result.len() <= 10); // graceful truncation
+    }
+
+    #[test]
+    fn truncate_tiny_max() {
+        assert_eq!(truncate("hello world", 3), "...");
+        assert_eq!(truncate("hello world", 0), "...");
+    }
+
+    #[test]
+    fn xml_escape_control_chars() {
+        // Control chars (except tab/newline/cr) should be stripped
+        let input = "hello\x00world\x01\tfoo\nbar";
+        let result = xml_escape(input);
+        assert_eq!(result, "helloworld\tfoo\nbar");
     }
 
     #[test]

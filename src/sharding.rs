@@ -1,8 +1,8 @@
-use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use crate::adapters::{TestCase, TestRunResult, TestSuite};
 use crate::error::{Result, TestxError};
+use crate::hash::StableHasher;
 
 /// Sharding mode for distributing tests across CI workers.
 #[derive(Debug, Clone)]
@@ -156,7 +156,7 @@ fn shard_hash(result: &TestRunResult, index: usize, total: usize) -> TestRunResu
     for (si, suite) in result.suites.iter().enumerate() {
         for test in &suite.tests {
             let hash_key = format!("{}::{}::{}", si, suite.name, test.name);
-            let mut hasher = DefaultHasher::new();
+            let mut hasher = StableHasher::new();
             hash_key.hash(&mut hasher);
             let hash_val = hasher.finish();
 

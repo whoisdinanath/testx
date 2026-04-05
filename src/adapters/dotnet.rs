@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use super::util::duration_from_secs_safe;
+use super::util::{combined_output, duration_from_secs_safe, has_marker_in_subdirs, truncate};
 use super::{
     ConfidenceScore, DetectionResult, TestAdapter, TestCase, TestError, TestRunResult, TestStatus,
     TestSuite,
@@ -24,6 +24,7 @@ impl DotnetAdapter {
     }
 
     fn has_dotnet_project(project_dir: &Path) -> bool {
+        // Check root directory first
         if let Ok(entries) = std::fs::read_dir(project_dir) {
             for entry in entries.flatten() {
                 let name = entry.file_name();
@@ -34,7 +35,10 @@ impl DotnetAdapter {
                 }
             }
         }
-        false
+        // Fallback: check up to 2 levels deep (e.g., Src/Project/Project.csproj)
+        has_marker_in_subdirs(project_dir, 2, |name| {
+            name.ends_with(".csproj") || name.ends_with(".fsproj") || name.ends_with(".sln")
+        })
     }
 
     fn detect_project_type(project_dir: &Path) -> &'static str {
@@ -47,7 +51,78 @@ impl DotnetAdapter {
                 }
             }
         }
+        // Also check subdirectories for F# projects
+        if has_marker_in_subdirs(project_dir, 2, |name| name.ends_with(".fsproj")) {
+            return "F#";
+        }
         "C#"
+    }
+
+    /// Find the best project/solution file to pass to `dotnet test`.
+    ///
+    /// Priority: .sln at root > .sln in subdirs > .csproj/.fsproj at root > in subdirs.
+    /// Returns None if a project file exists at root (dotnet discovers it automatically).
+    fn find_project_file(project_dir: &Path) -> Option<std::path::PathBuf> {
+        // If root has .sln or .csproj/.fsproj, dotnet test auto-discovers — no path needed
+        if let Ok(entries) = std::fs::read_dir(project_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.ends_with(".sln")
+                    || name_str.ends_with(".csproj")
+                    || name_str.ends_with(".fsproj")
+                {
+                    return None;
+                }
+            }
+        }
+
+        // Search subdirectories: prefer .sln files over .csproj/.fsproj
+        let mut best_sln: Option<std::path::PathBuf> = None;
+        let mut best_proj: Option<std::path::PathBuf> = None;
+        Self::scan_for_project_files(project_dir, 2, &mut best_sln, &mut best_proj);
+        best_sln.or(best_proj)
+    }
+
+    fn scan_for_project_files(
+        dir: &Path,
+        depth: u8,
+        best_sln: &mut Option<std::path::PathBuf>,
+        best_proj: &mut Option<std::path::PathBuf>,
+    ) {
+        if best_sln.is_some() {
+            return;
+        }
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            let path = entry.path();
+            if path.is_file() {
+                if name_str.ends_with(".sln") {
+                    *best_sln = Some(path);
+                    return; // .sln always wins
+                }
+                if name_str.ends_with(".csproj") || name_str.ends_with(".fsproj") {
+                    // Prefer test projects over library projects
+                    let is_test_proj = name_str.contains("Test") || name_str.contains("test");
+                    if is_test_proj || best_proj.is_none() {
+                        *best_proj = Some(path);
+                    }
+                }
+            } else if depth > 0 && path.is_dir() && !name_str.starts_with('.') {
+                let skip = matches!(
+                    name_str.as_ref(),
+                    "node_modules" | "vendor" | "target" | "bin" | "obj" | "packages"
+                );
+                if !skip {
+                    Self::scan_for_project_files(&path, depth - 1, best_sln, best_proj);
+                }
+            }
+        }
     }
 }
 
@@ -70,6 +145,7 @@ impl TestAdapter for DotnetAdapter {
 
         let lang = Self::detect_project_type(project_dir);
 
+        // Check for .sln at root or in subdirectories
         let has_sln = std::fs::read_dir(project_dir)
             .ok()
             .map(|entries| {
@@ -77,14 +153,17 @@ impl TestAdapter for DotnetAdapter {
                     .flatten()
                     .any(|e| e.file_name().to_string_lossy().ends_with(".sln"))
             })
-            .unwrap_or(false);
+            .unwrap_or(false)
+            || has_marker_in_subdirs(project_dir, 2, |name| name.ends_with(".sln"));
+
+        // Check for build artifacts at root or in subdirs
+        let has_build_artifacts = project_dir.join("obj").is_dir()
+            || project_dir.join("bin").is_dir()
+            || has_marker_in_subdirs(project_dir, 2, |name| name == "obj" || name == "bin");
 
         let confidence = ConfidenceScore::base(0.50)
             .signal(0.15, has_sln)
-            .signal(
-                0.10,
-                project_dir.join("obj").is_dir() || project_dir.join("bin").is_dir(),
-            )
+            .signal(0.10, has_build_artifacts)
             .signal(0.15, which::which("dotnet").is_ok())
             .finish();
 
@@ -98,6 +177,12 @@ impl TestAdapter for DotnetAdapter {
     fn build_command(&self, project_dir: &Path, extra_args: &[String]) -> Result<Command> {
         let mut cmd = Command::new("dotnet");
         cmd.arg("test");
+
+        // If project files are in subdirectories, pass the path explicitly
+        if let Some(project_file) = Self::find_project_file(project_dir) {
+            cmd.arg(&project_file);
+        }
+
         cmd.arg("--verbosity");
         cmd.arg("normal");
 
@@ -109,8 +194,12 @@ impl TestAdapter for DotnetAdapter {
         Ok(cmd)
     }
 
+    fn filter_args(&self, pattern: &str) -> Vec<String> {
+        vec!["--filter".to_string(), pattern.to_string()]
+    }
+
     fn parse_output(&self, stdout: &str, stderr: &str, exit_code: i32) -> TestRunResult {
-        let combined = format!("{}\n{}", stdout, stderr);
+        let combined = combined_output(stdout, stderr);
 
         let mut suites = parse_dotnet_output(&combined, exit_code);
 
@@ -149,6 +238,44 @@ impl TestAdapter for DotnetAdapter {
 ///      Failed: 1
 ///     Skipped: 0
 /// ```
+///
+/// Check if a line is a real dotnet test result (not MSBuild noise).
+///
+/// Real test results look like:
+///   `Passed Some.Test.Name [18 ms]`
+///   `Failed Some.Test.Name [< 1 ms]`
+///   `Skipped Some.Test.Name`
+///
+/// MSBuild noise looks like:
+///   `Failed to load prune package data from PrunePackageData folder, ...`
+///
+/// We require either a `[duration]` suffix or that the rest after the
+/// status prefix contains a dotted name (Namespace.Class.Method).
+fn is_dotnet_test_result_line(trimmed: &str) -> bool {
+    let rest = if let Some(r) = trimmed.strip_prefix("Passed ") {
+        r
+    } else if let Some(r) = trimmed.strip_prefix("Failed ") {
+        r
+    } else if let Some(r) = trimmed.strip_prefix("Skipped ") {
+        r
+    } else {
+        return false;
+    };
+
+    // Has a [duration] suffix — definitely a test result
+    if rest.ends_with(']') && rest.contains('[') {
+        return true;
+    }
+
+    // Has a dotted name like Namespace.Class.Method — test result
+    let name_part = rest.split_whitespace().next().unwrap_or("");
+    if name_part.contains('.') && !name_part.starts_with('.') {
+        return true;
+    }
+
+    false
+}
+
 fn parse_dotnet_output(output: &str, exit_code: i32) -> Vec<TestSuite> {
     let mut tests = Vec::new();
     let mut found_summary = false;
@@ -157,7 +284,9 @@ fn parse_dotnet_output(output: &str, exit_code: i32) -> Vec<TestSuite> {
     for line in output.lines() {
         let trimmed = line.trim();
 
-        if trimmed.starts_with("Passed ")
+        if !is_dotnet_test_result_line(trimmed) {
+            // Skip non-test lines (MSBuild noise, etc.)
+        } else if trimmed.starts_with("Passed ")
             || trimmed.starts_with("Failed ")
             || trimmed.starts_with("Skipped ")
         {
@@ -343,8 +472,13 @@ fn parse_dotnet_failures(output: &str) -> Vec<DotnetFailure> {
     while i < lines.len() {
         let trimmed = lines[i].trim();
 
-        // Find "Failed test_name [duration]" lines
-        if trimmed.starts_with("Failed ") || trimmed.starts_with("X ") {
+        // Find "Failed test_name [duration]" lines (skip MSBuild noise)
+        let is_failed_test = if trimmed.starts_with("Failed ") {
+            is_dotnet_test_result_line(trimmed)
+        } else {
+            trimmed.starts_with("X ")
+        };
+        if is_failed_test {
             let rest = if let Some(r) = trimmed.strip_prefix("Failed ") {
                 r
             } else if let Some(r) = trimmed.strip_prefix("X ") {
@@ -387,9 +521,7 @@ fn parse_dotnet_failures(output: &str) -> Vec<DotnetFailure> {
                 }
 
                 // Stop at next test result or empty context
-                if line.starts_with("Passed ")
-                    || line.starts_with("Failed ")
-                    || line.starts_with("Skipped ")
+                if is_dotnet_test_result_line(line)
                     || line.starts_with("X ")
                     || line.starts_with("Test Run")
                     || line.starts_with("Total tests:")
@@ -409,7 +541,7 @@ fn parse_dotnet_failures(output: &str) -> Vec<DotnetFailure> {
             let message = if message_lines.is_empty() {
                 "Test failed".to_string()
             } else {
-                truncate_dotnet_message(&message_lines.join("\n"), 500)
+                truncate(&message_lines.join("\n"), 500)
             };
 
             let stack_trace = if stack_lines.is_empty() {
@@ -458,15 +590,6 @@ fn extract_dotnet_location(line: &str) -> Option<String> {
         return Some(line.trim().to_string());
     }
     None
-}
-
-/// Truncate a failure message.
-fn truncate_dotnet_message(msg: &str, max_len: usize) -> String {
-    if msg.len() <= max_len {
-        msg.to_string()
-    } else {
-        format!("{}...", &msg[..max_len])
-    }
 }
 
 /// Enrich test cases with failure details.
@@ -887,10 +1010,10 @@ Test Run Failed.
     }
 
     #[test]
-    fn truncate_dotnet_message_test() {
-        assert_eq!(truncate_dotnet_message("short", 100), "short");
+    fn truncate_test() {
+        assert_eq!(truncate("short", 100), "short");
         let long = "m".repeat(600);
-        let truncated = truncate_dotnet_message(&long, 500);
+        let truncated = truncate(&long, 500);
         assert!(truncated.ends_with("..."));
     }
 
