@@ -107,6 +107,29 @@ file = "Makefile"
 contains = "test:"                    # File must contain this string
 ```
 
+### Opt-in adapters
+
+An adapter with **no detect rules never auto-detects** — it runs only when named. Use it
+for a second, heavier suite in the same project. `report_file` parses the report the
+runner writes to disk instead of stdout:
+
+```toml
+[[custom_adapter]]
+name = "e2e"
+command = "npm"
+args = ["run", "test:e2e", "--", "--reporter=list,junit"]
+output = "junit"
+report_file = "playwright-junit.xml"
+
+[custom_adapter.env]
+PLAYWRIGHT_JUNIT_OUTPUT_NAME = "playwright-junit.xml"
+```
+
+```bash
+testx                  # the project's own suite
+testx --adapter e2e    # the Playwright suite
+```
+
 ### Global adapters
 
 To make an adapter available in **all** your projects, place `.toml` files in:
@@ -122,6 +145,9 @@ To make an adapter available in **all** your projects, place `.toml` files in:
 ```bash
 # List all registered adapters (built-in + project + global)
 testx adapters
+
+# Run one adapter by name instead of auto-detecting
+testx --adapter e2e
 
 # Disable custom adapter loading (use only built-in adapters)
 testx --no-custom-adapters

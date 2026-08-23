@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Adapters**: `--adapter <name>` (`-a`) runs one adapter by name instead of auto-detecting,
+  and takes precedence over `adapter =` in `testx.toml`.
+- **Custom adapters**: an adapter with no detect rules is now opt-in — it never auto-detects
+  and only runs when named. This is how a second suite (Playwright e2e, smoke, contract tests)
+  lives beside a project's default suite.
+- **Custom adapters**: `report_file = "<path>"` parses the report a runner writes to disk
+  instead of stdout, for `pytest --junitxml`, `jest-junit`, `gotestsum --junitfile` and
+  `PLAYWRIGHT_JUNIT_OUTPUT_NAME`. Falls back to stdout when the file is absent.
 - **Workspace**: `testx workspace --exclude <dirs>` to skip directories during the scan.
   `WorkspaceConfig::skip_dirs` was honoured by the scanner but unreachable from the CLI.
 - **Adapters**: adapter overrides in `testx.toml` now accept a single alias segment, so
@@ -17,6 +25,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **JUnit parser**: each `<testsuite>` now owns only its own `<testcase>` elements. Runners
+  that emit one suite per file (Playwright, jest-junit, surefire) reported every test once
+  per suite, so a 5-test run showed up as 10.
+- **JUnit parser**: single-line documents — what `pytest --junitxml` and most JUnit writers
+  emit — are parsed instead of falling through to raw output, and `name=` no longer matches
+  the tail of `classname=`.
+- **Custom adapters**: an adapter with an empty `detect` matched every directory, because the
+  empty detect file joined to the project directory itself.
+- **Custom adapters**: a `detect` block with only `commands`, `env` or `content` rules never
+  matched; the file check vetoed it before the other rules ran.
 - **Exit code**: a runner that exits non-zero while every reported test passes is now a
   failure. Coverage thresholds (`pytest --cov-fail-under`), warnings-as-errors, plugin and
   collection errors, and timeouts were silently reported as success.

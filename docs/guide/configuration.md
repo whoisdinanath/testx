@@ -149,6 +149,7 @@ output = "lines"                 # How to parse output: json | junit | tap | lin
 confidence = 0.5                 # Detection confidence (0.0 – 1.0)
 check = "myfw --version"         # Verify the runner is installed before running
 working_dir = "tests"            # Run from this directory (relative to project root)
+report_file = "results.xml"      # Parse this file instead of stdout, if the runner writes one
 
 [custom_adapter.env]
 MY_VAR = "value"
@@ -162,6 +163,7 @@ MY_VAR = "value"
 - `output` — How testx parses the output (`lines` = no parsing, just pass through)
 - `confidence` — How confident testx should be when this adapter matches (higher = preferred over other matches)
 - `check` — A command that must succeed (exit code 0) for the adapter to be usable
+- `report_file` — Where the runner writes its report. Relative paths resolve against `working_dir`. testx parses this file when it exists and falls back to stdout when it doesn't.
 
 ### Advanced detection (multiple signals)
 
@@ -192,6 +194,32 @@ This adapter only activates when:
 3. The `CI` environment variable is set, AND
 4. The `Makefile` contains the string `test:`
 
+### Opt-in adapters (a second suite)
+
+An adapter with **no detect rules never auto-detects**. It stays out of the way until you
+ask for it by name, which is how a slow suite lives beside the fast one in the same project:
+
+```toml
+[[custom_adapter]]
+name = "e2e"
+command = "npm"
+args = ["run", "test:e2e", "--", "--reporter=list,junit"]
+output = "junit"
+report_file = "playwright-junit.xml"
+
+[custom_adapter.env]
+PLAYWRIGHT_JUNIT_OUTPUT_NAME = "playwright-junit.xml"
+```
+
+```bash
+testx                  # the project's own suite (vitest, pytest, cargo test, …)
+testx --adapter e2e    # the Playwright suite
+```
+
+`report_file` matters here because Playwright's `webServer` logs share stdout with the
+report. Any runner that writes JUnit or JSON to a file — `pytest --junitxml`, `jest-junit`,
+`gotestsum --junitfile` — works the same way.
+
 ### Global custom adapters
 
 If you want an adapter available in **all** your projects (not just one), place `.toml` files in:
@@ -209,6 +237,9 @@ Each file can contain one or more `[[custom_adapter]]` blocks.
 ```bash
 # List all adapters (built-in + project + global custom)
 testx adapters
+
+# Run one adapter by name instead of auto-detecting
+testx --adapter e2e
 
 # Run tests but ignore all custom adapters
 testx --no-custom-adapters
