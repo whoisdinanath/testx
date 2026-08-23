@@ -2,6 +2,8 @@
 name = "testx-cli"
 version = "0.2.0"
 edition = "2024"
+# Verified floor: 1.90 fails (`str::ceil_char_boundary` is unstable there), 1.91 builds.
+rust-version = "1.91"
 description = "One command. Any language. Beautiful tests."
 license = "MIT"
 repository = "https://github.com/whoisdinanath/testx"
@@ -57,14 +59,14 @@ harness = false
 
 # ── Build profiles ──────────────────────────────────────────
 [profile.dev]
-debug = 0                  # Skip debuginfo → ~15% faster link, smaller binary
+debug = 0 # Skip debuginfo → ~15% faster link, smaller binary
 
 [profile.dev.package."*"]
-opt-level = 1              # Optimise deps (not your code) → faster runtime
+opt-level = 1 # Optimise deps (not your code) → faster runtime
 
 [profile.release]
-opt-level = "z"            # Optimise for size (smaller binary)
-lto = "thin"               # Inter-crate optimisation
-strip = true               # Strip symbols automatically
-codegen-units = 1          # Better optimisation at cost of compile time
-panic = "abort"            # Smaller binary — no unwinding tables
+opt-level = "z"   # Optimise for size (smaller binary)
+lto = "thin"      # Inter-crate optimisation
+strip = true      # Strip symbols automatically
+codegen-units = 1 # Better optimisation at cost of compile time
+panic = "abort"   # Smaller binary — no unwinding tables

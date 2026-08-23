@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Workspace**: `testx workspace --exclude <dirs>` to skip directories during the scan.
+  `WorkspaceConfig::skip_dirs` was honoured by the scanner but unreachable from the CLI.
+- **Adapters**: adapter overrides in `testx.toml` now accept a single alias segment, so
+  `adapter = "javascript"` resolves the `JavaScript/TypeScript` adapter (previously only the
+  full slashed name worked).
+
+### Fixed
+
+- **Exit code**: a runner that exits non-zero while every reported test passes is now a
+  failure. Coverage thresholds (`pytest --cov-fail-under`), warnings-as-errors, plugin and
+  collection errors, and timeouts were silently reported as success.
+- **Python**: Accumulate pytest failures and collection errors in summary-only output instead of
+  letting the final category overwrite earlier failures.
+- **Workspace**: `testx workspace --list` printed a blank name for the root project.
+- **MSRV**: `package.rust-version` is now declared and verified in CI. The documented
+  minimum was 1.87, but the crate has required 1.91 since it started using
+  `str::ceil_char_boundary`; 1.87–1.90 fail to compile.
+- **Lints**: resolved six `clippy` errors (`unnecessary_sort_by`, `question_mark`) that fail
+  the `lint` job on Rust 1.98.
+
+### Changed
+
+- **CI**: least-privilege `permissions`, PR concurrency cancellation, `RUSTFLAGS` scoped per
+  job (it previously applied to `cargo install`, so a warning in a third-party crate could
+  fail the audit/coverage jobs), prebuilt `cargo-audit`/`cargo-tarpaulin` via
+  `taiki-e/install-action`, a real MSRV job, and no dependency on `bc` (absent from
+  `ubuntu-24.04` runners).
+- **Release**: tag pushes now run fmt/clippy/tests and assert the tag matches
+  `Cargo.toml` before any artifact is published; `contents: write` is scoped to the release
+  job; `musl-tools` install runs `apt-get update` first.
+- **Dependabot**: added for cargo, GitHub Actions, and the npm distribution package.
+
 ## [0.2.0] - 2026-04-05
 
 ### Added

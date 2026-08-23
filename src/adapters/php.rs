@@ -356,10 +356,9 @@ fn parse_testdox_test_line(line: &str) -> Option<TestCase> {
         (TestStatus::Passed, r)
     } else if let Some(r) = strip_testdox_marker(line, &['✘', '✗', '×']) {
         (TestStatus::Failed, r)
-    } else if let Some(r) = strip_testdox_marker(line, &['⚬', '○', '-']) {
-        (TestStatus::Skipped, r)
     } else {
-        return None;
+        let r = strip_testdox_marker(line, &['⚬', '○', '-'])?;
+        (TestStatus::Skipped, r)
     };
 
     let name = rest.trim().to_string();

@@ -327,11 +327,11 @@ fn parse_pytest_summary(output: &str, exit_code: i32) -> TestSuite {
                     .and_then(|s| s.parse::<usize>().ok())
                 {
                     if part.contains("passed") {
-                        passed = n;
+                        passed += n;
                     } else if part.contains("failed") || part.contains("error") {
-                        failed = n;
+                        failed += n;
                     } else if part.contains("skipped") {
-                        skipped = n;
+                        skipped += n;
                     }
                 }
             }
@@ -593,6 +593,18 @@ tests/test_calc.py::TestCalculator::test_div FAILED
         assert_eq!(result.total_failed(), 2);
         assert_eq!(result.total_skipped(), 3);
         assert_eq!(result.total_tests(), 15);
+    }
+
+    #[test]
+    fn parse_pytest_summary_adds_failures_and_errors() {
+        let stdout = "===== 1 failed, 2 errors in 0.10s =====\n";
+        let adapter = PythonAdapter::new();
+
+        let result = adapter.parse_output(stdout, "", 1);
+
+        assert_eq!(result.total_failed(), 3);
+        assert_eq!(result.total_tests(), 3);
+        assert!(!result.is_success());
     }
 
     #[test]

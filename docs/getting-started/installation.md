@@ -50,7 +50,7 @@ TESTX_INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/wh
 
 ## From crates.io (Rust users)
 
-If you have [Rust](https://rustup.rs/) installed (1.87 or newer):
+If you have [Rust](https://rustup.rs/) installed (1.91 or newer):
 
 ```bash
 cargo install testx-cli
@@ -176,4 +176,4 @@ The binary isn't on your `PATH`. Check where it was installed and add that direc
 Try `npm install -g @whoisdinanath/testx --unsafe-perm` or use a Node version manager like [nvm](https://github.com/nvm-sh/nvm) to avoid needing `sudo`.
 
 **Build from source fails**
-Make sure you have Rust 1.87+ installed. Run `rustup update` to get the latest version.
+Make sure you have Rust 1.91+ installed. Run `rustup update` to get the latest version.

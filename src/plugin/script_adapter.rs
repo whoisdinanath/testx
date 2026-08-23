@@ -963,12 +963,9 @@ fn simple_pattern_match(pattern: &str, input: &str) -> Option<Vec<String>> {
                 Some(lit) => {
                     // Find the literal in the remaining input
                     let remaining = &input[inp_idx..];
-                    if let Some(pos) = remaining.find(&lit) {
-                        captures.push(remaining[..pos].to_string());
-                        inp_idx += pos;
-                    } else {
-                        return None;
-                    }
+                    let pos = remaining.find(&lit)?;
+                    captures.push(remaining[..pos].to_string());
+                    inp_idx += pos;
                 }
                 None => {
                     // Capture group at end of pattern, capture everything
@@ -986,11 +983,8 @@ fn simple_pattern_match(pattern: &str, input: &str) -> Option<Vec<String>> {
             match next_literal {
                 Some(lit) => {
                     let remaining = &input[inp_idx..];
-                    if let Some(pos) = remaining.find(&lit) {
-                        inp_idx += pos;
-                    } else {
-                        return None;
-                    }
+                    let pos = remaining.find(&lit)?;
+                    inp_idx += pos;
                 }
                 None => {
                     inp_idx = inp_bytes.len();

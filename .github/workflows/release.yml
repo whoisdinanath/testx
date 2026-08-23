@@ -6,15 +6,54 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  # Tag pushes do not trigger CI (it only runs on main), so re-verify here
+  # before any artifact is published.
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: "-D warnings"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Tag matches Cargo.toml version
+        run: |
+          crate_version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -n1)
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [ "$crate_version" != "$tag_version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $crate_version"
+            exit 1
+          fi
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+      - name: Test
+        run: cargo test --locked
+
   build:
     name: Build (${{ matrix.target }})
+    needs: verify
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -60,10 +99,12 @@ jobs:
 
       - name: Install musl tools
         if: matrix.target == 'x86_64-unknown-linux-musl'
-        run: sudo apt-get install -y musl-tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --locked --release --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
@@ -90,6 +131,8 @@ jobs:
     name: Create Release
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -124,7 +167,7 @@ jobs:
         run: |
           version="${{ github.ref_name }}"
           version="${version#v}"
-          npm version "$version" --no-git-tag-version --allow-same-version || true
+          npm version "$version" --no-git-tag-version --allow-same-version
 
       - name: Publish to npm
         working-directory: npm

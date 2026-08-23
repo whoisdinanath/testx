@@ -107,6 +107,19 @@ impl DetectionEngine {
         &self.adapters
     }
 
+    /// Resolve an adapter index from a user-supplied name.
+    ///
+    /// Matching is case-insensitive against the full adapter name and against
+    /// each `/`-separated alias, so `javascript`, `typescript` and
+    /// `JavaScript/TypeScript` all resolve to the same adapter.
+    pub fn find_adapter(&self, name: &str) -> Option<usize> {
+        let wanted = name.trim().to_lowercase();
+        self.adapters.iter().position(|a| {
+            let full = a.name().to_lowercase();
+            full == wanted || full.split('/').any(|alias| alias == wanted)
+        })
+    }
+
     /// Number of built-in adapters (registered at construction time).
     /// Custom adapters are appended after these.
     pub const BUILTIN_COUNT: usize = 11;
@@ -194,5 +207,29 @@ mod tests {
     fn adapter_count() {
         let engine = DetectionEngine::new();
         assert_eq!(engine.adapters().len(), 11);
+    }
+
+    #[test]
+    fn find_adapter_matches_full_name_case_insensitively() {
+        let engine = DetectionEngine::new();
+        let idx = engine.find_adapter("javascript/typescript").unwrap();
+        assert_eq!(engine.adapter(idx).name(), "JavaScript/TypeScript");
+    }
+
+    #[test]
+    fn find_adapter_matches_a_single_alias_segment() {
+        let engine = DetectionEngine::new();
+        for alias in ["javascript", "TypeScript", "kotlin", "c++", ".net"] {
+            assert!(
+                engine.find_adapter(alias).is_some(),
+                "alias {alias} should resolve"
+            );
+        }
+    }
+
+    #[test]
+    fn find_adapter_rejects_unknown_names() {
+        let engine = DetectionEngine::new();
+        assert!(engine.find_adapter("cobol").is_none());
     }
 }

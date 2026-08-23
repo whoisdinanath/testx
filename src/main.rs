@@ -181,6 +181,9 @@ enum Commands {
         /// Include directories that are normally skipped (e.g., "packages,vendor")
         #[arg(long)]
         include: Option<String>,
+        /// Exclude additional directories from the scan (e.g., "services,examples")
+        #[arg(long)]
+        exclude: Option<String>,
         /// Only list discovered projects, don't run tests
         #[arg(long)]
         list: bool,
@@ -428,6 +431,7 @@ args = []
             fail_fast,
             filter,
             include,
+            exclude,
             list,
             args: ws_args,
         } => {
@@ -451,13 +455,17 @@ args = []
                 .map(|i| i.split(',').map(|s| s.trim().to_string()).collect())
                 .unwrap_or_default();
 
+            let skip_dirs: Vec<String> = exclude
+                .map(|e| e.split(',').map(|s| s.trim().to_string()).collect())
+                .unwrap_or_default();
+
             let ws_config = WorkspaceConfig {
                 max_depth,
                 parallel: !sequential,
                 max_jobs: jobs.unwrap_or(0),
                 fail_fast,
                 filter_languages,
-                skip_dirs: Vec::new(),
+                skip_dirs,
                 include_dirs,
             };
 
@@ -485,11 +493,10 @@ args = []
                 );
                 println!();
                 for p in &projects {
-                    let rel = p.path.strip_prefix(&project_dir).unwrap_or(&p.path);
                     println!(
                         "  {} {} ({}, {}, {:.0}% confidence)",
                         "▸".dimmed(),
-                        rel.display(),
+                        workspace::project_label(&p.path, &project_dir),
                         p.language,
                         p.framework,
                         p.confidence * 100.0,
@@ -960,6 +967,13 @@ args = []
             if !run_result.is_success() {
                 anyhow::bail!("tests failed");
             }
+            if run_result.runner_failed_silently() {
+                anyhow::bail!(
+                    "every reported test passed but the runner exited with code {} — \
+                     check coverage thresholds, warnings-as-errors, or collection/plugin errors",
+                    run_result.raw_exit_code
+                );
+            }
 
             Ok(())
         }
@@ -1119,13 +1133,9 @@ args = []
 
             let detected = if let Some(ref override_name) = adapter_override {
                 // Find adapter by name override from config
-                let idx = engine
-                    .adapters()
-                    .iter()
-                    .position(|a| a.name().to_lowercase() == override_name.to_lowercase())
-                    .with_context(|| {
-                        format!("Unknown adapter '{}' in testx.toml", override_name)
-                    })?;
+                let idx = engine.find_adapter(override_name).with_context(|| {
+                    format!("Unknown adapter '{}' in testx.toml", override_name)
+                })?;
                 let det = engine.adapter(idx).detect(&project_dir).with_context(|| {
                     format!(
                         "Adapter '{}' does not detect a project at {}",
@@ -1486,6 +1496,13 @@ args = []
 
             if !result.is_success() {
                 anyhow::bail!("tests failed");
+            }
+            if result.runner_failed_silently() {
+                anyhow::bail!(
+                    "every reported test passed but the runner exited with code {} — \
+                     check coverage thresholds, warnings-as-errors, or collection/plugin errors",
+                    result.raw_exit_code
+                );
             }
 
             Ok(())

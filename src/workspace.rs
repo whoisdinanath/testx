@@ -261,6 +261,19 @@ fn scan_dir(
     }
 }
 
+/// Display label for a discovered project, relative to the workspace root.
+///
+/// The root project's relative path is empty, which would otherwise render as
+/// a blank name.
+pub fn project_label(path: &Path, root: &Path) -> String {
+    let rel = path.strip_prefix(root).unwrap_or(path);
+    if rel.as_os_str().is_empty() {
+        ".".to_string()
+    } else {
+        rel.display().to_string()
+    }
+}
+
 /// Run tests in all discovered workspace projects.
 pub fn run_workspace(
     projects: &[WorkspaceProject],
@@ -985,6 +998,30 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(config.effective_jobs(), 8);
+    }
+
+    // ─── Project labels ───
+
+    #[test]
+    fn project_label_for_root_is_dot() {
+        let root = Path::new("/repo");
+        assert_eq!(project_label(root, root), ".");
+    }
+
+    #[test]
+    fn project_label_is_relative_to_root() {
+        assert_eq!(
+            project_label(Path::new("/repo/services/api"), Path::new("/repo")),
+            "services/api"
+        );
+    }
+
+    #[test]
+    fn project_label_falls_back_to_full_path_outside_root() {
+        assert_eq!(
+            project_label(Path::new("/elsewhere/app"), Path::new("/repo")),
+            "/elsewhere/app"
+        );
     }
 
     // ─── Custom skip dirs ───

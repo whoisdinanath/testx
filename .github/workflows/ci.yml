@@ -6,15 +6,25 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-D warnings"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   test:
     name: Test (${{ matrix.os }}, ${{ matrix.rust }})
     runs-on: ${{ matrix.os }}
+    # Scoped per job: a workflow-level RUSTFLAGS also applies to `cargo install`,
+    # which would fail the build on warnings from third-party crates.
+    env:
+      RUSTFLAGS: "-D warnings"
     strategy:
       fail-fast: false
       matrix:
@@ -32,19 +42,20 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
-          components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@v2
 
       - name: Build
-        run: cargo build --verbose
+        run: cargo build --locked --verbose
 
       - name: Test
-        run: cargo test --verbose
+        run: cargo test --locked --verbose
 
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: "-D warnings"
     steps:
       - uses: actions/checkout@v4
 
@@ -55,7 +66,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
       - name: Format check
         run: cargo fmt --all -- --check
@@ -65,10 +76,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install cargo-audit
-        run: cargo install cargo-audit
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Prebuilt binary; `cargo install cargo-audit` recompiles ~200 crates each run.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
       - name: Run audit
-        run: cargo audit
+        run: cargo audit --deny warnings
 
   coverage:
     name: Coverage
@@ -80,16 +97,18 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install cargo-tarpaulin
-        run: cargo install cargo-tarpaulin
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-tarpaulin
 
       - name: Run coverage
-        run: cargo tarpaulin --out xml --skip-clean --timeout 300 --exclude-files "tests/*" -- --skip cli_stress
+        run: cargo tarpaulin --locked --out xml --skip-clean --timeout 300 --exclude-files "tests/*" -- --skip cli_stress
 
       - name: Upload coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           files: cobertura.xml
+          token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
   msrv:
@@ -98,14 +117,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Single source of truth: package.rust-version in Cargo.toml.
+      - name: Resolve MSRV from Cargo.toml
+        id: msrv
+        run: |
+          version=$(sed -n 's/^rust-version *= *"\(.*\)"/\1/p' Cargo.toml | head -n1)
+          if [ -z "$version" ]; then
+            echo "::error::package.rust-version is missing from Cargo.toml"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Check MSRV
-        run: cargo check
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check on MSRV toolchain
+        run: cargo check --locked --all-targets
 
   bench:
     name: Benchmarks
     runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: "-D warnings"
     steps:
       - uses: actions/checkout@v4
 
@@ -114,7 +150,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Run benchmarks (compile check)
-        run: cargo bench --bench overhead -- --test
+        run: cargo bench --locked --bench overhead -- --test
 
   binary-size:
     name: Binary Size Check
@@ -127,15 +163,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build release binary
-        run: cargo build --release
+        run: cargo build --locked --release
 
       - name: Check binary size
+        env:
+          MAX_BYTES: 4194304
         run: |
           size=$(stat --format="%s" target/release/testx)
-          size_mb=$(echo "scale=2; $size / 1048576" | bc)
+          size_mb=$(awk -v b="$size" 'BEGIN { printf "%.2f", b / 1048576 }')
           echo "Binary size: ${size_mb} MB"
-          # Fail if binary exceeds 4 MB
-          if [ "$size" -gt 4194304 ]; then
+          if [ "$size" -gt "$MAX_BYTES" ]; then
             echo "::error::Binary size ${size_mb} MB exceeds 4 MB limit"
             exit 1
           fi
+

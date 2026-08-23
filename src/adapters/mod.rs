@@ -116,6 +116,15 @@ impl TestRunResult {
         self.total_failed() == 0
     }
 
+    /// The runner exited non-zero while every test it reported passed.
+    ///
+    /// Coverage thresholds, warnings-as-errors, plugin/collection errors and
+    /// timeouts all surface this way; treating them as success silently
+    /// disables those gates in CI.
+    pub fn runner_failed_silently(&self) -> bool {
+        self.raw_exit_code != 0 && self.is_success()
+    }
+
     /// Get all tests sorted by duration (slowest first)
     pub fn slowest_tests(&self, n: usize) -> Vec<(&TestSuite, &TestCase)> {
         let mut all: Vec<_> = self
@@ -123,7 +132,7 @@ impl TestRunResult {
             .iter()
             .flat_map(|s| s.tests.iter().map(move |t| (s, t)))
             .collect();
-        all.sort_by(|a, b| b.1.duration.cmp(&a.1.duration));
+        all.sort_by_key(|a| std::cmp::Reverse(a.1.duration));
         all.into_iter().take(n).collect()
     }
 }
@@ -213,5 +222,44 @@ pub trait TestAdapter {
     fn filter_args(&self, pattern: &str) -> Vec<String> {
         // Default: pass pattern as a positional argument
         vec![pattern.to_string()]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn result_with(status: TestStatus, raw_exit_code: i32) -> TestRunResult {
+        TestRunResult {
+            suites: vec![TestSuite {
+                name: "suite".to_string(),
+                tests: vec![TestCase {
+                    name: "test".to_string(),
+                    status,
+                    duration: Duration::from_millis(1),
+                    error: None,
+                }],
+            }],
+            duration: Duration::from_millis(1),
+            raw_exit_code,
+        }
+    }
+
+    #[test]
+    fn runner_failure_without_failing_tests_is_flagged() {
+        // pytest --cov-fail-under: every test passes, process exits 1.
+        assert!(result_with(TestStatus::Passed, 1).runner_failed_silently());
+    }
+
+    #[test]
+    fn clean_run_is_not_flagged() {
+        assert!(!result_with(TestStatus::Passed, 0).runner_failed_silently());
+    }
+
+    #[test]
+    fn failing_tests_are_reported_as_test_failures_not_runner_failures() {
+        let result = result_with(TestStatus::Failed, 1);
+        assert!(!result.is_success());
+        assert!(!result.runner_failed_silently());
     }
 }

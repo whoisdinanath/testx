@@ -10,7 +10,7 @@
   <a href="https://github.com/whoisdinanath/testx/releases/latest"><img src="https://img.shields.io/github/v/release/whoisdinanath/testx?label=release" alt="Release"></a>
   <a href="https://testx-cli.readthedocs.io/"><img src="https://img.shields.io/badge/docs-readthedocs-blue?logo=readthedocs" alt="Docs"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License"></a>
-  <img src="https://img.shields.io/badge/rust-1.87+-orange?logo=rust" alt="Rust 1.87+">
+  <img src="https://img.shields.io/badge/rust-1.91+-orange?logo=rust" alt="Rust 1.91+">
   <img src="https://img.shields.io/badge/languages-11-blueviolet" alt="11 Languages">
   <img src="https://img.shields.io/badge/tests-1150-brightgreen" alt="1150 Tests">
 </p>
@@ -244,6 +244,9 @@ testx workspace --filter rust,python
 # Include directories normally skipped (e.g., packages/)
 testx workspace --include packages
 
+# Skip additional directories (e.g., workspace members with no tests of their own)
+testx workspace --exclude services,examples
+
 # Run sequentially instead of in parallel
 testx workspace --sequential
 ```
@@ -312,6 +315,10 @@ timeout = 60
 [env]
 CI = "true"
 ```
+
+`adapter` matches an adapter name case-insensitively, and a single alias segment is
+enough — `javascript`, `typescript` and `JavaScript/TypeScript` all select the same
+adapter. Run `testx adapters` to list the names.
 
 CLI flags always override config file values.
 

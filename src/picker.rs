@@ -45,7 +45,7 @@ pub fn fuzzy_match(query: &str, items: &[String]) -> Vec<ScoredMatch> {
         })
         .collect();
 
-    matches.sort_by(|a, b| b.score.cmp(&a.score));
+    matches.sort_by_key(|a| std::cmp::Reverse(a.score));
     matches
 }
 

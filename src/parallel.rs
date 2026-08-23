@@ -206,7 +206,7 @@ fn partition_by_duration(result: &TestRunResult, num_workers: usize) -> Vec<Work
             all_tests.push((&suite.name, &test.name, test.duration));
         }
     }
-    all_tests.sort_by(|a, b| b.2.cmp(&a.2));
+    all_tests.sort_by_key(|a| std::cmp::Reverse(a.2));
 
     // Track total duration per worker
     let mut worker_durations = vec![Duration::ZERO; num_workers];

@@ -258,9 +258,7 @@ impl Runner {
         if let Some(name) = &self.config.adapter_override {
             let index = self
                 .engine
-                .adapters()
-                .iter()
-                .position(|a| a.name().to_lowercase() == name.to_lowercase())
+                .find_adapter(name)
                 .ok_or_else(|| TestxError::AdapterNotFound { name: name.clone() })?;
 
             let adapter = self.engine.adapter(index);
