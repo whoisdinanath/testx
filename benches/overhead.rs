@@ -3,7 +3,8 @@
 //! This benchmarks the full "detect → parse" pipeline that runs on top of
 //! the underlying test runner, giving a clear picture of testx's added cost.
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
+use std::hint::black_box;
 use std::time::Duration;
 use tempfile::TempDir;
 use testx::adapters::{TestCase, TestRunResult, TestStatus, TestSuite};

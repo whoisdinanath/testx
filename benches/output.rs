@@ -1,6 +1,7 @@
 //! Benchmarks for output formatting.
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
+use std::hint::black_box;
 use std::time::Duration;
 use testx::adapters::{TestCase, TestRunResult, TestStatus, TestSuite};
 

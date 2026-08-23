@@ -1,6 +1,7 @@
 //! Benchmarks for test output parsing.
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
+use std::hint::black_box;
 
 fn generate_rust_output(n: usize) -> String {
     let mut output = String::new();
