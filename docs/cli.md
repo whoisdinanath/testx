@@ -50,6 +50,7 @@ These flags work with any command.
 | Flag                   | Short | Type    | Default  | Description                                                                      |
 | ---------------------- | ----- | ------- | -------- | -------------------------------------------------------------------------------- |
 | `--path`               | `-p`  | PATH    | `.`      | Project directory to run in                                                      |
+| `--adapter`            | `-a`  | NAME    | —        | Run a specific adapter instead of auto-detecting (built-in or custom)            |
 | `--output`             | `-o`  | FORMAT  | `pretty` | Output format: `pretty`, `json`, `junit`, `tap`                                  |
 | `--slowest`            |       | N       | —        | Show N slowest tests at the end of the run                                       |
 | `--raw`                |       | —       | —        | Show raw output from the test runner (no formatting)                             |

@@ -146,6 +146,9 @@ pub struct CustomAdapterConfig {
     pub check: Option<String>,
     /// Working directory relative to project root
     pub working_dir: Option<String>,
+    /// Report file the runner writes, parsed instead of stdout when present.
+    /// Relative paths resolve against `working_dir`.
+    pub report_file: Option<String>,
     /// Environment variables to set
     #[serde(default)]
     pub env: HashMap<String, String>,
@@ -168,6 +171,19 @@ pub struct CustomDetectConfig {
     pub content: Vec<ContentMatch>,
     /// Subdirectory search depth for markers (0 = root only)
     pub search_depth: usize,
+}
+
+impl CustomDetectConfig {
+    /// Whether any detection rule is declared.
+    ///
+    /// An adapter without rules is opt-in: it never auto-detects and is only
+    /// reachable via `--adapter <name>` or `adapter = "<name>"` in testx.toml.
+    pub fn is_empty(&self) -> bool {
+        self.files.is_empty()
+            && self.commands.is_empty()
+            && self.env_vars.is_empty()
+            && self.content.is_empty()
+    }
 }
 
 impl<'de> serde::Deserialize<'de> for CustomDetectConfig {
@@ -580,6 +596,27 @@ contains = "my-runner"
         assert_eq!(custom[0].detect.content[0].contains, "my-runner");
         assert_eq!(custom[0].check.as_deref(), Some("my-runner --version"));
         assert_eq!(custom[0].working_dir.as_deref(), Some("tests"));
+    }
+
+    #[test]
+    fn load_config_with_opt_in_custom_adapter() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("testx.toml"),
+            r#"
+[[custom_adapter]]
+name = "e2e"
+command = "npx"
+args = ["playwright", "test", "--reporter=junit"]
+output = "junit"
+report_file = "junit.xml"
+"#,
+        )
+        .unwrap();
+        let config = Config::load(dir.path());
+        let custom = config.custom_adapter.as_ref().unwrap();
+        assert_eq!(custom[0].report_file.as_deref(), Some("junit.xml"));
+        assert!(custom[0].detect.is_empty());
     }
 
     #[test]

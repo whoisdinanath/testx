@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use colored::Colorize;
 
+use testx::adapters::DetectionResult;
 use testx::{config::Config, detection, output};
 
 #[derive(ValueEnum, Clone, Default)]
@@ -90,6 +91,10 @@ struct Cli {
     /// Disable custom adapters defined in testx.toml or global config
     #[arg(long, global = true)]
     no_custom_adapters: bool,
+
+    /// Run a specific adapter by name instead of auto-detecting
+    #[arg(short = 'a', long, global = true)]
+    adapter: Option<String>,
 
     /// Extra arguments to pass through to the underlying test runner (after --)
     #[arg(last = true)]
@@ -288,6 +293,8 @@ fn run(cli: Cli) -> Result<()> {
                 for c in customs {
                     let detect_desc = if !c.detect.files.is_empty() {
                         c.detect.files.join(", ")
+                    } else if c.detect.is_empty() {
+                        format!("opt-in only — run with --adapter {}", c.name)
                     } else {
                         "custom detection".into()
                     };
@@ -1004,8 +1011,8 @@ args = []
             let retries = cli.retries.or(config.retries).unwrap_or(0);
             let fail_fast = fail_fast || config.fail_fast.unwrap_or(false);
 
-            // Resolve adapter override from config
-            let adapter_override = config.adapter.clone();
+            // Resolve adapter override: CLI --adapter > testx.toml adapter
+            let adapter_override = cli.adapter.clone().or_else(|| config.adapter.clone());
 
             // Resolve filter: CLI --filter > config filter.include
             let filter_include = filter.or_else(|| {
@@ -1132,17 +1139,21 @@ args = []
             }
 
             let detected = if let Some(ref override_name) = adapter_override {
-                // Find adapter by name override from config
+                // Find adapter by name override from CLI or testx.toml
                 let idx = engine.find_adapter(override_name).with_context(|| {
-                    format!("Unknown adapter '{}' in testx.toml", override_name)
-                })?;
-                let det = engine.adapter(idx).detect(&project_dir).with_context(|| {
                     format!(
-                        "Adapter '{}' does not detect a project at {}",
-                        override_name,
-                        project_dir.display()
+                        "Unknown adapter '{}'. Run 'testx adapters' to list them.",
+                        override_name
                     )
                 })?;
+                // An explicit pin is the answer, not a hint: adapters that
+                // deliberately never auto-detect are still runnable by name.
+                let adapter = engine.adapter(idx);
+                let det = adapter.detect(&project_dir).unwrap_or(DetectionResult {
+                    language: "Custom".to_string(),
+                    framework: adapter.name().to_string(),
+                    confidence: 1.0,
+                });
                 testx::detection::DetectedProject {
                     adapter_index: idx,
                     detection: det,

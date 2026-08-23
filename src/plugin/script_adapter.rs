@@ -58,6 +58,8 @@ pub struct ScriptAdapterConfig {
     pub parser: OutputParser,
     /// Working directory relative to project root (default: ".")
     pub working_dir: Option<String>,
+    /// Report file the runner writes; parsed instead of stdout when it exists.
+    pub report_file: Option<String>,
     /// Environment variables to set
     pub env: Vec<(String, String)>,
 }
@@ -73,6 +75,7 @@ impl ScriptAdapterConfig {
             args: Vec::new(),
             parser: OutputParser::Lines,
             working_dir: None,
+            report_file: None,
             env: Vec::new(),
         }
     }
@@ -95,6 +98,12 @@ impl ScriptAdapterConfig {
         self
     }
 
+    /// Set the report file to parse instead of stdout.
+    pub fn with_report_file(mut self, path: &str) -> Self {
+        self.report_file = Some(path.to_string());
+        self
+    }
+
     /// Add an environment variable.
     pub fn with_env(mut self, key: &str, value: &str) -> Self {
         self.env.push((key.to_string(), value.to_string()));
@@ -103,8 +112,9 @@ impl ScriptAdapterConfig {
 
     /// Check if this adapter detects at the given project directory.
     pub fn detect(&self, project_dir: &Path) -> bool {
-        let detect_path = project_dir.join(&self.detect_file);
-        if detect_path.exists() {
+        // An empty `detect_file` joins to `project_dir` itself, which always
+        // exists — that would make the adapter match every directory.
+        if !self.detect_file.is_empty() && project_dir.join(&self.detect_file).exists() {
             return true;
         }
 
@@ -175,6 +185,8 @@ pub struct ScriptTestAdapter {
     pub source: String,
     /// Enhanced detection config (content matching, command checks, env vars)
     detect_config: Option<crate::config::CustomDetectConfig>,
+    /// Directory the last command ran in, used to resolve a relative report file.
+    run_dir: std::sync::OnceLock<PathBuf>,
 }
 
 impl ScriptTestAdapter {
@@ -187,6 +199,7 @@ impl ScriptTestAdapter {
             is_global: false,
             source: "testx.toml".to_string(),
             detect_config: None,
+            run_dir: std::sync::OnceLock::new(),
         }
     }
 
@@ -215,6 +228,7 @@ impl ScriptTestAdapter {
             args: cfg.args.clone(),
             parser,
             working_dir: cfg.working_dir.clone(),
+            report_file: cfg.report_file.clone(),
             env,
         };
 
@@ -225,6 +239,7 @@ impl ScriptTestAdapter {
             is_global: false,
             source: "testx.toml".to_string(),
             detect_config: Some(cfg.detect.clone()),
+            run_dir: std::sync::OnceLock::new(),
         }
     }
 
@@ -251,6 +266,27 @@ impl ScriptTestAdapter {
         self.is_global = is_global;
         self
     }
+
+    /// Read the configured report file, if one is set and was produced.
+    ///
+    /// Runners that emit machine-readable results usually write them to a file
+    /// (`pytest --junitxml`, `jest-junit`, `PLAYWRIGHT_JUNIT_OUTPUT_NAME`), so
+    /// stdout alone is not parseable. Falls back to stdout when the file is
+    /// absent so a misconfigured path still shows the runner's own output.
+    fn read_report_file(&self) -> Option<String> {
+        let configured = self.config.report_file.as_ref()?;
+        let path = Path::new(configured);
+        let path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.run_dir
+                .get()
+                .cloned()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(path)
+        };
+        std::fs::read_to_string(path).ok()
+    }
 }
 
 /// Parse a parser name string into an OutputParser enum.
@@ -270,54 +306,44 @@ impl TestAdapter for ScriptTestAdapter {
     }
 
     fn detect(&self, project_dir: &Path) -> Option<DetectionResult> {
-        let detected = if let Some(ref dc) = self.detect_config {
-            // Enhanced detection: ALL configured checks must pass
+        let detected = match &self.detect_config {
+            // No rule at all: opt-in adapter, reachable only by name.
+            Some(dc) if dc.is_empty() => false,
+            Some(dc) => {
+                // Every configured check must pass. An absent check is not a
+                // veto, so a content-only or command-only rule still works.
+                let files_ok =
+                    dc.files.is_empty() || dc.files.iter().any(|f| project_dir.join(f).exists());
 
-            // Check files (at least one must exist)
-            let mut pass = if !dc.files.is_empty() {
-                dc.files.iter().any(|f| project_dir.join(f).exists())
-            } else {
-                // Fall back to basic file detection
-                self.config.detect(project_dir)
-            };
+                let commands_ok = files_ok
+                    && dc.commands.iter().all(|cmd_str| {
+                        let parts: Vec<&str> = cmd_str.split_whitespace().collect();
+                        if parts.is_empty() {
+                            return false;
+                        }
+                        create_command(parts[0])
+                            .args(&parts[1..])
+                            .current_dir(project_dir)
+                            .stdout(std::process::Stdio::null())
+                            .stderr(std::process::Stdio::null())
+                            .status()
+                            .map(|s| s.success())
+                            .unwrap_or(false)
+                    });
 
-            // Check commands (must all succeed)
-            if pass && !dc.commands.is_empty() {
-                pass = dc.commands.iter().all(|cmd_str| {
-                    let parts: Vec<&str> = cmd_str.split_whitespace().collect();
-                    if parts.is_empty() {
-                        return false;
-                    }
-                    create_command(parts[0])
-                        .args(&parts[1..])
-                        .current_dir(project_dir)
-                        .stdout(std::process::Stdio::null())
-                        .stderr(std::process::Stdio::null())
-                        .status()
-                        .map(|s| s.success())
-                        .unwrap_or(false)
-                });
+                let env_ok =
+                    commands_ok && dc.env_vars.iter().all(|var| std::env::var(var).is_ok());
+
+                env_ok
+                    && dc.content.iter().all(|cm| {
+                        let file_path = project_dir.join(&cm.file);
+                        std::fs::read_to_string(file_path)
+                            .map(|content| content.contains(&cm.contains))
+                            .unwrap_or(false)
+                    })
             }
-
-            // Check environment variables (all must be set)
-            if pass && !dc.env_vars.is_empty() {
-                pass = dc.env_vars.iter().all(|var| std::env::var(var).is_ok());
-            }
-
-            // Check content matches (all must match)
-            if pass && !dc.content.is_empty() {
-                pass = dc.content.iter().all(|cm| {
-                    let file_path = project_dir.join(&cm.file);
-                    std::fs::read_to_string(file_path)
-                        .map(|content| content.contains(&cm.contains))
-                        .unwrap_or(false)
-                });
-            }
-
-            pass
-        } else {
             // No enhanced config: use basic file detection only
-            self.config.detect(project_dir)
+            None => self.config.detect(project_dir),
         };
 
         if detected {
@@ -366,10 +392,15 @@ impl TestAdapter for ScriptTestAdapter {
             cmd.env(key, value);
         }
 
+        let _ = self.run_dir.set(working_dir);
+
         Ok(cmd)
     }
 
     fn parse_output(&self, stdout: &str, stderr: &str, exit_code: i32) -> TestRunResult {
+        if let Some(report) = self.read_report_file() {
+            return parse_script_output(&self.config.parser, &report, stderr, exit_code);
+        }
         parse_script_output(&self.config.parser, stdout, stderr, exit_code)
     }
 
@@ -546,18 +577,22 @@ fn parse_json_test(value: &serde_json::Value) -> Option<TestCase> {
 
 /// Parse JUnit XML output.
 fn parse_junit_output(stdout: &str, exit_code: i32) -> TestRunResult {
-    let mut suites = Vec::new();
-
-    // Find all <testsuite> blocks
-    for line in stdout.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("<testsuite")
-            && !trimmed.starts_with("<testsuites")
-            && let Some(suite) = parse_junit_suite_tag(trimmed, stdout)
-        {
-            suites.push(suite);
-        }
-    }
+    // Each <testsuite> owns only the <testcase> elements inside it. Runners
+    // that emit one suite per file (Playwright, jest-junit, surefire) would
+    // otherwise report every test once per suite.
+    let mut suites: Vec<TestSuite> = xml_elements(stdout, "testsuite")
+        .into_iter()
+        .filter_map(|(tag, body)| {
+            let tests = parse_junit_testcases(&body);
+            if tests.is_empty() {
+                return None;
+            }
+            Some(TestSuite {
+                name: extract_xml_attr(&tag, "name").unwrap_or_else(|| "tests".to_string()),
+                tests,
+            })
+        })
+        .collect();
 
     // If no suites found, try to parse <testcase> elements directly
     if suites.is_empty() {
@@ -581,82 +616,114 @@ fn parse_junit_output(stdout: &str, exit_code: i32) -> TestRunResult {
     }
 }
 
-fn parse_junit_suite_tag(tag: &str, full_output: &str) -> Option<TestSuite> {
-    let name = extract_xml_attr(tag, "name").unwrap_or_else(|| "tests".to_string());
-    let tests = parse_junit_testcases(full_output);
-    if tests.is_empty() {
-        return None;
-    }
-    Some(TestSuite { name, tests })
+fn parse_junit_testcases(xml: &str) -> Vec<TestCase> {
+    xml_elements(xml, "testcase")
+        .into_iter()
+        .map(|(tag, body)| {
+            let failure = xml_elements(&body, "failure")
+                .into_iter()
+                .chain(xml_elements(&body, "error"))
+                .next();
+
+            let (status, error) = match failure {
+                Some((tag, _)) => (
+                    TestStatus::Failed,
+                    Some(TestError {
+                        message: extract_xml_attr(&tag, "message")
+                            .unwrap_or_else(|| "Test failed".to_string()),
+                        location: None,
+                    }),
+                ),
+                None if !xml_elements(&body, "skipped").is_empty() => (TestStatus::Skipped, None),
+                None => (TestStatus::Passed, None),
+            };
+
+            TestCase {
+                name: extract_xml_attr(&tag, "name").unwrap_or_else(|| "unknown".to_string()),
+                status,
+                duration: extract_xml_attr(&tag, "time")
+                    .and_then(|t| t.parse::<f64>().ok())
+                    .map(duration_from_secs_safe)
+                    .unwrap_or(Duration::ZERO),
+                error,
+            }
+        })
+        .collect()
 }
 
-fn parse_junit_testcases(xml: &str) -> Vec<TestCase> {
-    let mut tests = Vec::new();
-    let lines: Vec<&str> = xml.lines().collect();
+/// Collect every `<name ...>` element in `xml` as `(open tag, inner body)`.
+///
+/// Scans by tag offset rather than by line so that single-line documents —
+/// what `pytest --junitxml` and most JUnit writers produce — parse the same as
+/// pretty-printed ones. Self-closing elements yield an empty body.
+fn xml_elements(xml: &str, name: &str) -> Vec<(String, String)> {
+    let open = format!("<{name}");
+    let close = format!("</{name}>");
+    let mut elements = Vec::new();
+    let mut cursor = 0;
 
-    let mut i = 0;
-    while i < lines.len() {
-        let trimmed = lines[i].trim();
-        if trimmed.starts_with("<testcase") {
-            let name = extract_xml_attr(trimmed, "name").unwrap_or_else(|| "unknown".to_string());
-            let time = extract_xml_attr(trimmed, "time")
-                .and_then(|t| t.parse::<f64>().ok())
-                .map(duration_from_secs_safe)
-                .unwrap_or(Duration::ZERO);
+    while let Some(offset) = xml[cursor..].find(&open) {
+        let start = cursor + offset;
+        let after_name = start + open.len();
 
-            // Check for failure/error/skipped in subsequent lines
-            let mut status = TestStatus::Passed;
-            let mut error = None;
-
-            if trimmed.ends_with("/>") {
-                // Self-closing, check for nested skipped/failure check
-                if trimmed.contains("<skipped") {
-                    status = TestStatus::Skipped;
-                }
-            } else {
-                // Look at following lines until </testcase>
-                let mut j = i + 1;
-                while j < lines.len() {
-                    let inner = lines[j].trim();
-                    if inner.starts_with("</testcase") {
-                        break;
-                    }
-                    if inner.starts_with("<failure") || inner.starts_with("<error") {
-                        status = TestStatus::Failed;
-                        let message = extract_xml_attr(inner, "message")
-                            .unwrap_or_else(|| "Test failed".to_string());
-                        error = Some(TestError {
-                            message,
-                            location: None,
-                        });
-                    }
-                    if inner.starts_with("<skipped") {
-                        status = TestStatus::Skipped;
-                    }
-                    j += 1;
-                }
-            }
-
-            tests.push(TestCase {
-                name,
-                status,
-                duration: time,
-                error,
-            });
+        // Reject prefix matches: `<testsuites` is not a `<testsuite`.
+        if !matches!(xml[after_name..].chars().next(), Some(c) if c.is_whitespace() || c == '>' || c == '/')
+        {
+            cursor = after_name;
+            continue;
         }
-        i += 1;
+
+        let Some(offset) = xml[after_name..].find('>') else {
+            break;
+        };
+        let tag_end = after_name + offset;
+        let tag = xml[start..=tag_end].to_string();
+
+        if tag.ends_with("/>") {
+            elements.push((tag, String::new()));
+            cursor = tag_end + 1;
+            continue;
+        }
+
+        let body_start = tag_end + 1;
+        let (body, next) = match xml[body_start..].find(&close) {
+            Some(offset) => (
+                xml[body_start..body_start + offset].to_string(),
+                body_start + offset + close.len(),
+            ),
+            None => (xml[body_start..].to_string(), xml.len()),
+        };
+        elements.push((tag, body));
+        cursor = next;
     }
 
-    tests
+    elements
 }
 
 /// Extract an XML attribute value from an element tag.
 fn extract_xml_attr(tag: &str, attr: &str) -> Option<String> {
     let search = format!("{attr}=\"");
-    let start = tag.find(&search)? + search.len();
-    let rest = &tag[start..];
-    let end = rest.find('"')?;
-    Some(rest[..end].to_string())
+    let mut from = 0;
+
+    while let Some(offset) = tag[from..].find(&search) {
+        let start = from + offset;
+        // `name=` must not match the tail of `classname=`.
+        let delimited = start == 0
+            || tag[..start]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_whitespace() || c == '<');
+        let value_start = start + search.len();
+
+        if delimited {
+            let rest = &tag[value_start..];
+            let end = rest.find('"')?;
+            return Some(rest[..end].to_string());
+        }
+        from = value_start;
+    }
+
+    None
 }
 
 /// Parse TAP (Test Anything Protocol) output.
@@ -1437,6 +1504,84 @@ mod tests {
         assert_eq!(extract_xml_attr("<test>", "name"), None);
     }
 
+    #[test]
+    fn xml_attr_ignores_a_longer_attribute_with_the_same_suffix() {
+        assert_eq!(
+            extract_xml_attr(r#"<testcase classname="Foo" name="bar">"#, "name"),
+            Some("bar".into())
+        );
+    }
+
+    // ─── Opt-in adapters & report files ─────────────────────────────────
+
+    fn custom_config(name: &str, command: &str) -> crate::config::CustomAdapterConfig {
+        toml::from_str(&format!(
+            "name = \"{name}\"\ncommand = \"{command}\"\noutput = \"junit\"\n"
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn adapter_without_detect_rules_never_auto_detects() {
+        let dir = tempfile::tempdir().unwrap();
+        let adapter = ScriptTestAdapter::from_custom_config(&custom_config("e2e", "echo"));
+        assert!(adapter.detect(dir.path()).is_none());
+    }
+
+    #[test]
+    fn adapter_with_content_only_rule_detects() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Makefile"), "test:\n\techo hi\n").unwrap();
+
+        let cfg: crate::config::CustomAdapterConfig = toml::from_str(
+            r#"
+name = "make-test"
+command = "make test"
+[[detect.content]]
+file = "Makefile"
+contains = "test:"
+"#,
+        )
+        .unwrap();
+        let adapter = ScriptTestAdapter::from_custom_config(&cfg);
+        assert!(adapter.detect(dir.path()).is_some());
+    }
+
+    #[test]
+    fn report_file_is_parsed_instead_of_stdout() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("junit.xml"),
+            r#"<testsuite name="e2e"><testcase name="login" time="0.5"/></testsuite>"#,
+        )
+        .unwrap();
+
+        let mut cfg = custom_config("e2e", "echo");
+        cfg.report_file = Some("junit.xml".into());
+        let adapter = ScriptTestAdapter::from_custom_config(&cfg);
+        adapter.build_command(dir.path(), &[]).unwrap();
+
+        let result = adapter.parse_output("Running 1 test using 1 worker", "", 0);
+        assert_eq!(result.total_passed(), 1);
+        assert_eq!(result.suites[0].tests[0].name, "login");
+    }
+
+    #[test]
+    fn missing_report_file_falls_back_to_stdout() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = custom_config("e2e", "echo");
+        cfg.report_file = Some("never-written.xml".into());
+        let adapter = ScriptTestAdapter::from_custom_config(&cfg);
+        adapter.build_command(dir.path(), &[]).unwrap();
+
+        let result = adapter.parse_output(
+            r#"<testsuite name="from-stdout"><testcase name="t" time="0.1"/></testsuite>"#,
+            "",
+            0,
+        );
+        assert_eq!(result.suites[0].name, "from-stdout");
+    }
+
     // ─── Fallback Result Tests ──────────────────────────────────────────
 
     #[test]
@@ -1780,8 +1925,33 @@ mod tests {
   </testsuite>
 </testsuites>"#;
         let result = parse_junit_output(xml, 0);
-        // Note: current parser finds testcases regardless of suite nesting
-        assert!(result.total_tests() >= 2);
+        // Each suite owns only its own testcases — no cross-suite duplication.
+        assert_eq!(result.total_tests(), 2);
+        assert_eq!(result.suites.len(), 2);
+        assert_eq!(result.suites[0].name, "s1");
+        assert_eq!(result.suites[0].tests[0].name, "t1");
+        assert_eq!(result.suites[1].name, "s2");
+        assert_eq!(result.suites[1].tests[0].name, "t2");
+    }
+
+    #[test]
+    fn parse_junit_single_line_document() {
+        // What pytest --junitxml and most JUnit writers actually emit.
+        let xml = r#"<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" tests="2"><testcase classname="test_a" name="passes" time="0.01"/><testcase classname="test_a" name="fails" time="0.02"><failure message="assert 1 == 2">trace</failure></testcase></testsuite></testsuites>"#;
+        let result = parse_junit_output(xml, 1);
+        assert_eq!(result.total_tests(), 2);
+        assert_eq!(result.total_failed(), 1);
+        assert_eq!(result.suites[0].name, "pytest");
+        assert_eq!(result.suites[0].tests[1].name, "fails");
+    }
+
+    #[test]
+    fn parse_junit_reads_name_not_classname() {
+        // Maven surefire puts classname first; `name=` must not match the tail
+        // of `classname=`.
+        let xml = r#"<testsuite name="s"><testcase classname="com.example.Foo" name="the_test" time="0.5"/></testsuite>"#;
+        let result = parse_junit_output(xml, 0);
+        assert_eq!(result.suites[0].tests[0].name, "the_test");
     }
 
     #[test]
@@ -2148,6 +2318,7 @@ mod tests {
             confidence: 0.7,
             check: Some("bazel --version".into()),
             working_dir: None,
+            report_file: None,
             env: std::collections::HashMap::new(),
         };
 
@@ -2178,6 +2349,7 @@ mod tests {
             confidence: 0.5,
             check: None,
             working_dir: Some("src".into()),
+            report_file: None,
             env,
         };
 
@@ -2209,6 +2381,7 @@ mod tests {
             confidence: 0.6,
             check: None,
             working_dir: None,
+            report_file: None,
             env: std::collections::HashMap::new(),
         };
 
@@ -2240,6 +2413,7 @@ mod tests {
             confidence: 0.6,
             check: None,
             working_dir: None,
+            report_file: None,
             env: std::collections::HashMap::new(),
         };
 
