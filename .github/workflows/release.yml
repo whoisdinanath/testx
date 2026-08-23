@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - "v*"
+  # Lets a release be finished without moving the tag - a publish step that
+  # failed on an expired registry token can just be re-run against the tag.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -174,5 +177,31 @@ jobs:
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-crates:
+    name: Publish to crates.io
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Re-running a release must not fail on a version that is already up;
+      # crates.io versions are immutable, so treat "already exists" as done.
+      - name: Publish
+        run: |
+          version="${{ github.ref_name }}"
+          version="${version#v}"
+          if cargo publish --locked 2>publish.log; then
+            echo "published ${version}"
+          elif grep -q "already exists" publish.log; then
+            echo "${version} is already on crates.io, nothing to do"
+          else
+            cat publish.log
+            exit 1
+          fi
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
 

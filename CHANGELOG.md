@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-23
+
+### Changed
+
+- **Release**: tags now publish to crates.io as well as GitHub Releases and npm, and the
+  workflow can be dispatched manually so a publish step that failed on an expired registry
+  token can be re-run without moving the tag.
+- **Dependencies**: `toml` 1.1, `criterion` 0.8 (`criterion::black_box` is deprecated, so the
+  benches use `std::hint::black_box`), `notify` 8, and the GitHub Actions used by CI and the
+  release workflow.
+
 ## [0.3.0] - 2026-08-23
 
 ### Added
