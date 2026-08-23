@@ -119,6 +119,18 @@ pub struct SummaryPatterns {
     pub skipped: &'static [&'static str],
 }
 
+/// Whether a user-supplied argument already decides the runner's verbosity.
+///
+/// Adapters inject a verbose flag so per-test names are parseable; they must
+/// not do so when the user has already asked for a specific level, and must
+/// not silently drop it just because other arguments were passed.
+pub fn sets_verbosity(arg: &str) -> bool {
+    let arg = arg.split('=').next().unwrap_or(arg);
+    matches!(arg, "--verbose" | "--quiet" | "--verbosity" | "-quiet")
+        || (arg.starts_with("-v") && arg.chars().skip(1).all(|c| c == 'v'))
+        || (arg.starts_with("-q") && arg.chars().skip(1).all(|c| c == 'q'))
+}
+
 /// Check if any file matching `predicate` exists in immediate subdirectories of `dir`.
 ///
 /// This enables detection of projects where the build/config file is one or two
@@ -824,5 +836,27 @@ mod tests {
     #[test]
     fn count_pattern_none() {
         assert_eq!(count_pattern("hello world", "FAIL"), 0);
+    }
+
+    #[test]
+    fn verbosity_flags_are_recognised() {
+        for arg in [
+            "-v",
+            "-vv",
+            "--verbose",
+            "-q",
+            "-qq",
+            "--quiet",
+            "--verbosity=2",
+        ] {
+            assert!(sets_verbosity(arg), "{arg} should count as verbosity");
+        }
+    }
+
+    #[test]
+    fn other_flags_are_not_verbosity() {
+        for arg in ["--cov", "-x", "-k", "--tb=short", "-race", "--version"] {
+            assert!(!sets_verbosity(arg), "{arg} should not count as verbosity");
+        }
     }
 }

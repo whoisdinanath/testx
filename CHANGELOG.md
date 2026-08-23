@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Custom adapters**: `report_file = "<path>"` parses the report a runner writes to disk
   instead of stdout, for `pytest --junitxml`, `jest-junit`, `gotestsum --junitfile` and
   `PLAYWRIGHT_JUNIT_OUTPUT_NAME`. Falls back to stdout when the file is absent.
+- **Custom adapters**: `output = "pattern"` reads a runner's ordinary output line by line
+  using `[custom_adapter.pattern]`. The parser existed but no configuration reached it.
+- **JavaScript**: projects whose `package.json` defines a `test` script but no recognised
+  framework now run through `npm test`, which covers `node --test`, tap, uvu, jasmine and
+  anything else a project scripts itself. TAP output is parsed per test.
 - **Workspace**: `testx workspace --exclude <dirs>` to skip directories during the scan.
   `WorkspaceConfig::skip_dirs` was honoured by the scanner but unreachable from the CLI.
 - **Adapters**: adapter overrides in `testx.toml` now accept a single alias segment, so
@@ -25,6 +30,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Python**: passing any extra argument dropped `-v`, so pytest printed bare dots and every
+  test was reported under an invented name (`test_1`, `failed_test_2`). Verbosity is now kept
+  unless the caller sets it, which restores real names for `testx -- --cov`.
+- **Go**: passing any extra argument dropped both `-v` and `./...`, so `testx -- -race`
+  silently tested only the root package. Both are now kept unless the caller supplies them.
+- **Python**: a packaging manifest alone (`pyproject.toml`, `setup.py`, `requirements.txt`)
+  was enough to claim a project at ~67% confidence and then run `unittest` over a library
+  with no tests. Detection now requires a test directory, test files or a test config.
+- **Python**: workspace members inherit the pytest configuration from the workspace root, the
+  same way pytest resolves its rootdir. `uv`/Poetry monorepo members were previously run with
+  `python -m unittest`.
+- **Python**: `unittest` verbose output is parsed per test, including `skipped`,
+  `expected failure` and both the pre- and post-3.11 parenthesised forms.
 - **JUnit parser**: each `<testsuite>` now owns only its own `<testcase>` elements. Runners
   that emit one suite per file (Playwright, jest-junit, surefire) reported every test once
   per suite, so a 5-test run showed up as 10.

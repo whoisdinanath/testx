@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use super::util::{combined_output, duration_from_secs_safe, ensure_non_empty};
+use super::util::{combined_output, duration_from_secs_safe, ensure_non_empty, sets_verbosity};
 use super::{
     ConfidenceScore, DetectionResult, TestAdapter, TestCase, TestRunResult, TestStatus, TestSuite,
 };
@@ -69,9 +69,13 @@ impl TestAdapter for GoAdapter {
         let mut cmd = Command::new("go");
         cmd.arg("test");
 
-        if extra_args.is_empty() {
+        if !extra_args.iter().any(|a| sets_verbosity(a)) {
             cmd.arg("-v"); // verbose for parsing individual tests
-            cmd.arg("./..."); // all packages
+        }
+        // Without an explicit package list `go test` only builds the current
+        // directory, so extra flags must not silently shrink the run.
+        if !extra_args.iter().any(|a| is_go_package_arg(a)) {
+            cmd.arg("./...");
         }
 
         for arg in extra_args {
@@ -196,6 +200,20 @@ impl TestAdapter for GoAdapter {
 
 /// Maximum recursion depth for Go test file discovery.
 const MAX_GO_SCAN_DEPTH: usize = 20;
+
+/// Whether an argument names Go packages rather than being a flag or a flag value.
+///
+/// `go test -race` alone tests only the current directory, so testx keeps
+/// `./...` unless the user named the packages themselves. Matching only
+/// path-shaped arguments keeps flag values like `-run TestFoo` out of it.
+fn is_go_package_arg(arg: &str) -> bool {
+    arg == "all" || arg == "." || arg.starts_with("./") || arg.starts_with('/') || {
+        // An import path such as example.com/pkg/... — dotted host, then a slash.
+        let mut parts = arg.splitn(2, '/');
+        let host = parts.next().unwrap_or_default();
+        parts.next().is_some() && host.contains('.')
+    }
+}
 
 fn find_test_files_recursive(dir: &Path) -> bool {
     find_test_files_recursive_inner(dir, 0)
@@ -469,5 +487,38 @@ FAIL	github.com/user/pkg	0.001s
         std::fs::write(dir.path().join("main.go"), "package main\n").unwrap();
         let adapter = GoAdapter::new();
         assert!(adapter.detect(dir.path()).is_none());
+    }
+
+    fn args_for(extra: &[&str]) -> Vec<String> {
+        let dir = tempfile::tempdir().unwrap();
+        let extra: Vec<String> = extra.iter().map(|s| s.to_string()).collect();
+        GoAdapter::new()
+            .build_command(dir.path(), &extra)
+            .unwrap()
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn extra_flags_do_not_shrink_the_run() {
+        // `go test -race` alone would only build the current directory.
+        let args = args_for(&["-race"]);
+        assert!(args.contains(&"-v".to_string()), "{args:?}");
+        assert!(args.contains(&"./...".to_string()), "{args:?}");
+        assert!(args.contains(&"-race".to_string()), "{args:?}");
+    }
+
+    #[test]
+    fn a_flag_value_is_not_mistaken_for_a_package() {
+        let args = args_for(&["-run", "TestFoo"]);
+        assert!(args.contains(&"./...".to_string()), "{args:?}");
+    }
+
+    #[test]
+    fn explicit_packages_replace_the_default() {
+        let args = args_for(&["./pkg/..."]);
+        assert_eq!(args.iter().filter(|a| *a == "./...").count(), 0, "{args:?}");
+        assert!(args.contains(&"./pkg/...".to_string()), "{args:?}");
     }
 }

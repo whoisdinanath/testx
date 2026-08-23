@@ -149,9 +149,31 @@ pub struct CustomAdapterConfig {
     /// Report file the runner writes, parsed instead of stdout when present.
     /// Relative paths resolve against `working_dir`.
     pub report_file: Option<String>,
+    /// Line patterns for `output = "pattern"`.
+    #[serde(alias = "regex")]
+    pub pattern: Option<CustomPatternConfig>,
     /// Environment variables to set
     #[serde(default)]
     pub env: HashMap<String, String>,
+}
+
+/// Line patterns for the `pattern` output parser.
+///
+/// Patterns are literal text with `(.*)` capture groups and `.*` wildcards —
+/// not full regular expressions.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct CustomPatternConfig {
+    /// Pattern matching a line that reports a passing test
+    pub pass: String,
+    /// Pattern matching a line that reports a failing test
+    pub fail: String,
+    /// Pattern matching a line that reports a skipped test
+    pub skip: Option<String>,
+    /// 1-indexed capture group holding the test name
+    pub name_group: Option<usize>,
+    /// 1-indexed capture group holding the duration in milliseconds
+    pub duration_group: Option<usize>,
 }
 
 /// Detection configuration for custom adapters.

@@ -211,7 +211,18 @@ impl ScriptTestAdapter {
         let detect_file = cfg.detect.files.first().cloned().unwrap_or_default();
 
         // Map output parser string → OutputParser enum
-        let parser = parse_output_parser_str(&cfg.output);
+        let parser = match cfg.pattern.as_ref() {
+            Some(p) if matches!(cfg.output.to_lowercase().as_str(), "pattern" | "regex") => {
+                OutputParser::Regex(RegexParserConfig {
+                    pass_pattern: p.pass.clone(),
+                    fail_pattern: p.fail.clone(),
+                    skip_pattern: p.skip.clone(),
+                    name_group: p.name_group.unwrap_or(1),
+                    duration_group: p.duration_group,
+                })
+            }
+            _ => parse_output_parser_str(&cfg.output),
+        };
 
         // Map env HashMap → Vec<(String, String)>
         let env: Vec<(String, String)> = cfg
@@ -1582,6 +1593,27 @@ contains = "test:"
         assert_eq!(result.suites[0].name, "from-stdout");
     }
 
+    #[test]
+    fn pattern_parser_is_reachable_from_config() {
+        let cfg: crate::config::CustomAdapterConfig = toml::from_str(
+            r#"
+name = "bats"
+command = "bats"
+output = "pattern"
+[pattern]
+pass = "ok (.*)"
+fail = "not ok (.*)"
+"#,
+        )
+        .unwrap();
+        let adapter = ScriptTestAdapter::from_custom_config(&cfg);
+
+        let result = adapter.parse_output("ok validates input\nnot ok rejects junk\n", "", 1);
+        assert_eq!(result.total_passed(), 1);
+        assert_eq!(result.total_failed(), 1);
+        assert_eq!(result.suites[0].tests[0].name, "validates input");
+    }
+
     // ─── Fallback Result Tests ──────────────────────────────────────────
 
     #[test]
@@ -2319,6 +2351,7 @@ contains = "test:"
             check: Some("bazel --version".into()),
             working_dir: None,
             report_file: None,
+            pattern: None,
             env: std::collections::HashMap::new(),
         };
 
@@ -2350,6 +2383,7 @@ contains = "test:"
             check: None,
             working_dir: Some("src".into()),
             report_file: None,
+            pattern: None,
             env,
         };
 
@@ -2382,6 +2416,7 @@ contains = "test:"
             check: None,
             working_dir: None,
             report_file: None,
+            pattern: None,
             env: std::collections::HashMap::new(),
         };
 
@@ -2414,6 +2449,7 @@ contains = "test:"
             check: None,
             working_dir: None,
             report_file: None,
+            pattern: None,
             env: std::collections::HashMap::new(),
         };
 

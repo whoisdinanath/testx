@@ -108,8 +108,33 @@ impl JavaScriptAdapter {
             return Some("ava");
         }
 
+        // Anything else with a real `test` script: node --test, tap, uvu, jasmine,
+        // karma, a shell script. `npm test` is the project's own answer for how
+        // to run them, so use it rather than refusing to detect.
+        if has_test_script(&content) {
+            return Some("npm-script");
+        }
+
         None
     }
+}
+
+/// Whether package.json defines a `test` script that actually runs something.
+///
+/// `npm init` writes a placeholder that only exits 1; treating it as a suite
+/// would make every JavaScript project look testable.
+fn has_test_script(package_json: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(package_json) else {
+        return false;
+    };
+    let Some(script) = value
+        .get("scripts")
+        .and_then(|s| s.get("test"))
+        .and_then(|t| t.as_str())
+    else {
+        return false;
+    };
+    !script.trim().is_empty() && !script.contains("no test specified")
 }
 
 impl TestAdapter for JavaScriptAdapter {
@@ -184,6 +209,19 @@ impl TestAdapter for JavaScriptAdapter {
             "ava" => {
                 cmd = build_js_runner_cmd(pkg_manager, "ava");
             }
+            "npm-script" => {
+                // Delegate to whatever the project already defined.
+                let runner = if pkg_manager == "npx" {
+                    "npm"
+                } else {
+                    pkg_manager
+                };
+                cmd = Command::new(runner);
+                cmd.args(["run", "test"]);
+                if !extra_args.is_empty() {
+                    cmd.arg("--");
+                }
+            }
             _ => {
                 cmd = build_js_runner_cmd(pkg_manager, "jest");
             }
@@ -203,6 +241,20 @@ impl TestAdapter for JavaScriptAdapter {
 
     fn parse_output(&self, stdout: &str, stderr: &str, exit_code: i32) -> TestRunResult {
         let combined = strip_ansi(&combined_output(stdout, stderr));
+
+        // `node --test`, tap and tape emit TAP once stdout is not a terminal.
+        if combined
+            .lines()
+            .any(|l| l.trim_start().starts_with("TAP version"))
+        {
+            return crate::plugin::script_adapter::parse_script_output(
+                &crate::plugin::script_adapter::OutputParser::Tap,
+                &combined,
+                "",
+                exit_code,
+            );
+        }
+
         let failure_messages = parse_jest_failures(&combined);
         let mut suites: Vec<TestSuite> = Vec::new();
         let mut current_suite = String::new();
@@ -1097,5 +1149,55 @@ Time:        0.5 s
         let adapter = JavaScriptAdapter::new();
         let det = adapter.detect(dir.path()).unwrap();
         assert_eq!(det.framework, "ava");
+    }
+
+    #[test]
+    fn detect_falls_back_to_the_test_script() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"scripts":{"test":"node --test"}}"#,
+        )
+        .unwrap();
+        let adapter = JavaScriptAdapter::new();
+        assert_eq!(adapter.detect(dir.path()).unwrap().framework, "npm-script");
+
+        let args: Vec<String> = adapter
+            .build_command(dir.path(), &[])
+            .unwrap()
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        assert_eq!(args, vec!["run", "test"]);
+    }
+
+    #[test]
+    fn npm_init_placeholder_is_not_a_suite() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"scripts":{"test":"echo \"Error: no test specified\" && exit 1"}}"#,
+        )
+        .unwrap();
+        assert!(JavaScriptAdapter::new().detect(dir.path()).is_none());
+    }
+
+    #[test]
+    fn tap_output_is_parsed() {
+        // `node --test` switches to TAP as soon as stdout is not a terminal.
+        let stdout = "\
+TAP version 13
+# Subtest: adds
+ok 1 - adds
+# Subtest: fails
+not ok 2 - fails
+ok 3 - later # SKIP
+1..3
+";
+        let result = JavaScriptAdapter::new().parse_output(stdout, "", 1);
+        assert_eq!(result.total_passed(), 1);
+        assert_eq!(result.total_failed(), 1);
+        assert_eq!(result.total_skipped(), 1);
+        assert_eq!(result.suites[0].tests[0].name, "adds");
     }
 }

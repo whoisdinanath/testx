@@ -165,6 +165,29 @@ MY_VAR = "value"
 - `check` — A command that must succeed (exit code 0) for the adapter to be usable
 - `report_file` — Where the runner writes its report. Relative paths resolve against `working_dir`. testx parses this file when it exists and falls back to stdout when it doesn't.
 
+### Parsing arbitrary output
+
+When a runner has no machine-readable format, `output = "pattern"` reads its
+ordinary lines. Patterns are literal text with `(.*)` capture groups and `.*`
+wildcards — not full regular expressions.
+
+```toml
+[[custom_adapter]]
+name = "bats"
+command = "bats"
+args = ["tests/"]
+output = "pattern"
+
+[custom_adapter.pattern]
+pass = "ok (.*)"
+fail = "not ok (.*)"
+skip = "ok (.*) # skip"
+name_group = 1        # 1-indexed capture group holding the test name
+```
+
+Lines that match nothing are ignored; if no line matches at all, testx falls
+back to a single result driven by the exit code.
+
 ### Advanced detection (multiple signals)
 
 For more precise detection, use a `[detect]` table with multiple conditions:

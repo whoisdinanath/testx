@@ -61,7 +61,7 @@
 | **Rust**                    | cargo test                    | —                     |
 | **Go**                      | go test                       | —                     |
 | **Python**                  | pytest, unittest, Django      | uv, poetry, pdm, venv |
-| **JavaScript / TypeScript** | Jest, Vitest, Mocha, AVA, Bun | npm, pnpm, yarn, bun  |
+| **JavaScript / TypeScript** | Jest, Vitest, Mocha, AVA, Bun, `node --test`, or any `npm test` script | npm, pnpm, yarn, bun  |
 | **Java / Kotlin**           | Maven Surefire, Gradle        | mvn, gradle           |
 | **C / C++**                 | Google Test, CTest, Meson     | cmake, meson          |
 | **Ruby**                    | RSpec, Minitest               | bundler               |

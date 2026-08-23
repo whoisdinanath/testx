@@ -130,6 +130,25 @@ testx                  # the project's own suite
 testx --adapter e2e    # the Playwright suite
 ```
 
+### Parsing arbitrary output
+
+Runners with no machine-readable format are read line by line with
+`output = "pattern"`. Patterns are literal text with `(.*)` capture groups and
+`.*` wildcards — not full regular expressions.
+
+```toml
+[[custom_adapter]]
+name = "bats"
+command = "bats"
+args = ["tests/"]
+output = "pattern"
+
+[custom_adapter.pattern]
+pass = "ok (.*)"
+fail = "not ok (.*)"
+name_group = 1
+```
+
 ### Global adapters
 
 To make an adapter available in **all** your projects, place `.toml` files in:

@@ -4,10 +4,15 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use super::util::{combined_output, duration_from_secs_safe};
+use super::util::{
+    combined_output, duration_from_secs_safe, has_marker_in_subdirs, sets_verbosity,
+};
 use super::{
     ConfidenceScore, DetectionResult, TestAdapter, TestCase, TestRunResult, TestStatus, TestSuite,
 };
+
+/// How far up the tree to look for a workspace-level pytest configuration.
+const MAX_ANCESTOR_LOOKUP: usize = 5;
 
 pub struct PythonAdapter;
 
@@ -24,42 +29,53 @@ impl PythonAdapter {
 
     /// Check if pytest is the test framework
     fn is_pytest(project_dir: &Path) -> bool {
-        // Check for pytest-specific files/configs
-        let markers = ["pytest.ini", ".pytest_cache", "conftest.py"];
-        for m in &markers {
-            if project_dir.join(m).exists() {
+        if Self::has_pytest_markers(project_dir) {
+            return true;
+        }
+
+        // Monorepo members (uv/poetry workspaces) keep the pytest config at the
+        // workspace root, which is also how pytest itself picks its rootdir.
+        project_dir
+            .ancestors()
+            .skip(1)
+            .take(MAX_ANCESTOR_LOOKUP)
+            .any(Self::has_strict_pytest_markers)
+    }
+
+    /// Pytest evidence in this directory alone.
+    fn has_pytest_markers(project_dir: &Path) -> bool {
+        if Self::has_strict_pytest_markers(project_dir) {
+            return true;
+        }
+
+        // A loose mention of pytest anywhere in pyproject.toml (a dependency,
+        // a tool section) is enough locally but too weak to inherit.
+        let pyproject = project_dir.join("pyproject.toml");
+        pyproject.exists()
+            && std::fs::read_to_string(&pyproject)
+                .map(|c| c.contains("pytest"))
+                .unwrap_or(false)
+    }
+
+    /// Configuration that unambiguously declares pytest.
+    fn has_strict_pytest_markers(dir: &Path) -> bool {
+        for m in ["pytest.ini", ".pytest_cache", "conftest.py"] {
+            if dir.join(m).exists() {
                 return true;
             }
         }
 
-        // Check pyproject.toml for pytest config
-        let pyproject = project_dir.join("pyproject.toml");
-        if pyproject.exists()
-            && let Ok(content) = std::fs::read_to_string(&pyproject)
-            && (content.contains("[tool.pytest") || content.contains("pytest"))
-        {
-            return true;
-        }
+        let file_contains = |file: &str, needle: &str| {
+            let path = dir.join(file);
+            path.exists()
+                && std::fs::read_to_string(&path)
+                    .map(|c| c.contains(needle))
+                    .unwrap_or(false)
+        };
 
-        // Check setup.cfg
-        let setup_cfg = project_dir.join("setup.cfg");
-        if setup_cfg.exists()
-            && let Ok(content) = std::fs::read_to_string(&setup_cfg)
-            && content.contains("[tool:pytest]")
-        {
-            return true;
-        }
-
-        // Check tox.ini
-        let tox_ini = project_dir.join("tox.ini");
-        if tox_ini.exists()
-            && let Ok(content) = std::fs::read_to_string(&tox_ini)
-            && content.contains("[pytest]")
-        {
-            return true;
-        }
-
-        false
+        file_contains("pyproject.toml", "[tool.pytest")
+            || file_contains("setup.cfg", "[tool:pytest]")
+            || file_contains("tox.ini", "[pytest]")
     }
 
     /// Check if Django is present
@@ -125,6 +141,18 @@ impl TestAdapter for PythonAdapter {
             return None;
         }
 
+        let has_test_dir = project_dir.join("tests").is_dir() || project_dir.join("test").is_dir();
+
+        // A packaging manifest alone is not a test suite. Without this a plain
+        // library gets claimed at ~67% confidence and then "runs" no tests.
+        if !Self::is_pytest(project_dir)
+            && !Self::is_django(project_dir)
+            && !has_test_dir
+            && !has_test_files(project_dir)
+        {
+            return None;
+        }
+
         let framework = if Self::is_pytest(project_dir) {
             "pytest"
         } else if Self::is_django(project_dir) {
@@ -135,7 +163,6 @@ impl TestAdapter for PythonAdapter {
 
         let is_pytest = framework == "pytest";
         let is_django = framework == "django";
-        let has_test_dir = project_dir.join("tests").is_dir() || project_dir.join("test").is_dir();
         let has_lock = project_dir.join("poetry.lock").exists()
             || project_dir.join("Pipfile.lock").exists()
             || project_dir.join("uv.lock").exists()
@@ -193,8 +220,10 @@ impl TestAdapter for PythonAdapter {
             cmd.arg("-m").arg("unittest");
         }
 
-        // Add verbose flag for better output parsing (pytest)
-        if is_pytest && extra_args.is_empty() {
+        // Verbose output is what makes per-test names parseable — without it both
+        // runners print bare dots and only the summary survives. Django is
+        // excluded because its `-v` takes a required level argument.
+        if !is_django && !extra_args.iter().any(|a| sets_verbosity(a)) {
             cmd.arg("-v");
         }
 
@@ -219,6 +248,24 @@ impl TestAdapter for PythonAdapter {
 
         for line in combined.lines() {
             let trimmed = line.trim();
+
+            // unittest verbose output: "test_name (pkg.module.Class) ... ok"
+            if let Some((suite_name, test_name, status)) = parse_unittest_line(trimmed) {
+                if suite_name != current_suite_name && !tests.is_empty() {
+                    suites.push(TestSuite {
+                        name: current_suite_name.clone(),
+                        tests: std::mem::take(&mut tests),
+                    });
+                }
+                current_suite_name = suite_name;
+                tests.push(TestCase {
+                    name: test_name,
+                    status,
+                    duration: Duration::from_millis(0),
+                    error: None,
+                });
+                continue;
+            }
 
             // pytest verbose output: "test_file.py::TestClass::test_name PASSED"
             // or: "test_file.py::test_name PASSED"
@@ -288,6 +335,45 @@ impl TestAdapter for PythonAdapter {
             raw_exit_code: exit_code,
         }
     }
+}
+
+/// Parse a unittest verbose line: `test_name (pkg.module.Class.test_name) ... ok`.
+///
+/// Python 3.11+ repeats the method inside the parentheses, older releases stop
+/// at the class. Returns `(suite, test, status)`.
+fn parse_unittest_line(line: &str) -> Option<(String, String, TestStatus)> {
+    let (head, status_str) = line.split_once(" ... ")?;
+    let (test_name, qualified) = head.split_once(" (")?;
+    let qualified = qualified.strip_suffix(')')?;
+
+    if test_name.is_empty()
+        || !test_name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return None;
+    }
+
+    let status = match status_str.trim() {
+        "ok" => TestStatus::Passed,
+        s if s.starts_with("FAIL") || s.starts_with("ERROR") => TestStatus::Failed,
+        s if s.starts_with("unexpected success") => TestStatus::Failed,
+        s if s.starts_with("skipped") || s.starts_with("expected failure") => TestStatus::Skipped,
+        _ => return None,
+    };
+
+    let suite = qualified
+        .strip_suffix(&format!(".{test_name}"))
+        .unwrap_or(qualified);
+
+    Some((suite.to_string(), test_name.to_string(), status))
+}
+
+/// Whether the project contains anything that looks like a Python test module.
+fn has_test_files(project_dir: &Path) -> bool {
+    has_marker_in_subdirs(project_dir, 3, |name| {
+        name.ends_with(".py") && (name.starts_with("test_") || name.ends_with("_test.py"))
+    })
 }
 
 /// Parse a pytest verbose output line like "tests/test_foo.py::test_bar PASSED"
@@ -717,6 +803,7 @@ tests/test_math.py::test_setup ERROR
     fn detect_pipfile_project() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("Pipfile"), "[packages]\n").unwrap();
+        std::fs::create_dir(dir.path().join("tests")).unwrap();
         let adapter = PythonAdapter::new();
         let det = adapter.detect(dir.path()).unwrap();
         assert_eq!(det.language, "Python");
@@ -731,9 +818,113 @@ tests/test_math.py::test_setup ERROR
             "from setuptools import setup\n",
         )
         .unwrap();
+        std::fs::write(dir.path().join("test_thing.py"), "import unittest\n").unwrap();
         let adapter = PythonAdapter::new();
         let det = adapter.detect(dir.path()).unwrap();
         assert_eq!(det.framework, "unittest");
-        assert!(det.confidence < 0.6);
+        assert!(det.confidence < 0.7);
+    }
+
+    #[test]
+    fn packaging_manifest_without_tests_is_not_a_test_project() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("pyproject.toml"),
+            "[project]\nname = \"lib\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir(dir.path().join("src")).unwrap();
+        std::fs::write(
+            dir.path().join("src/lib.py"),
+            "def add(a, b):\n    return a + b\n",
+        )
+        .unwrap();
+
+        assert!(PythonAdapter::new().detect(dir.path()).is_none());
+    }
+
+    #[test]
+    fn workspace_member_inherits_pytest_from_the_root() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("pyproject.toml"),
+            "[tool.pytest.ini_options]\ntestpaths = [\"services\"]\n",
+        )
+        .unwrap();
+
+        let member = root.path().join("services/api");
+        std::fs::create_dir_all(member.join("tests")).unwrap();
+        std::fs::write(
+            member.join("pyproject.toml"),
+            "[project]\nname = \"api\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            member.join("tests/test_api.py"),
+            "def test_ok():\n    pass\n",
+        )
+        .unwrap();
+
+        let det = PythonAdapter::new().detect(&member).unwrap();
+        assert_eq!(det.framework, "pytest");
+    }
+
+    #[test]
+    fn verbose_flag_survives_extra_args() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("pytest.ini"), "[pytest]\n").unwrap();
+        let adapter = PythonAdapter::new();
+
+        let cmd = adapter
+            .build_command(dir.path(), &["--cov".to_string()])
+            .unwrap();
+        let args: Vec<_> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        assert!(args.contains(&"-v".to_string()), "{args:?}");
+        assert!(args.contains(&"--cov".to_string()), "{args:?}");
+    }
+
+    #[test]
+    fn explicit_quiet_is_not_overridden() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("pytest.ini"), "[pytest]\n").unwrap();
+        let adapter = PythonAdapter::new();
+
+        let cmd = adapter
+            .build_command(dir.path(), &["-q".to_string()])
+            .unwrap();
+        let args: Vec<_> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        assert!(!args.contains(&"-v".to_string()), "{args:?}");
+    }
+
+    #[test]
+    fn parses_unittest_verbose_lines() {
+        let output = "\
+test_adds (tests.test_calc.CalcTest.test_adds) ... ok
+test_breaks (tests.test_calc.CalcTest.test_breaks) ... FAIL
+test_later (tests.test_calc.CalcTest.test_later) ... skipped 'later'
+test_known_bad (tests.test_calc.CalcTest.test_known_bad) ... expected failure
+";
+        let result = PythonAdapter::new().parse_output(output, "", 1);
+        assert_eq!(result.total_tests(), 4);
+        assert_eq!(result.total_passed(), 1);
+        assert_eq!(result.total_failed(), 1);
+        assert_eq!(result.total_skipped(), 2);
+        assert_eq!(result.suites[0].name, "tests.test_calc.CalcTest");
+        assert_eq!(result.suites[0].tests[0].name, "test_adds");
+    }
+
+    #[test]
+    fn parses_unittest_lines_from_older_pythons() {
+        // Pre-3.11 stops at the class name inside the parentheses.
+        let output = "test_adds (tests.test_calc.CalcTest) ... ok\n";
+        let result = PythonAdapter::new().parse_output(output, "", 0);
+        assert_eq!(result.suites[0].name, "tests.test_calc.CalcTest");
+        assert_eq!(result.suites[0].tests[0].name, "test_adds");
     }
 }
