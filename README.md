@@ -291,6 +291,7 @@ testx -w                 # Watch mode — re-run on file changes
 testx --retries 3        # Retry failed tests 3 times
 testx --reporter github  # Activate GitHub Actions reporter
 testx --no-custom-adapters  # Disable custom adapter loading
+testx --adapter e2e         # Run a named adapter instead of auto-detecting
 testx run --filter "auth*"  # Filter tests by name pattern
 testx run --exclude "*slow" # Exclude tests matching pattern
 testx run --fail-fast       # Stop on first failure
@@ -357,6 +358,28 @@ search_depth = 2
 [[custom_adapter.detect.content]]
 file = "Makefile"
 contains = "test:"
+```
+
+### A second suite beside the default one
+
+An adapter with **no detect rules never auto-detects** — it only runs when you name it.
+That is how a slow or heavyweight suite (e2e, smoke, contract tests) lives in the same
+project as the fast one. Use `report_file` when the runner writes its machine-readable
+results to a file rather than stdout, which is the norm for `pytest --junitxml`,
+`jest-junit` and Playwright:
+
+```toml
+# testx            -> the project's own suite (vitest, pytest, cargo test, …)
+# testx --adapter e2e -> the Playwright suite
+[[custom_adapter]]
+name = "e2e"
+command = "npm"
+args = ["run", "test:e2e", "--", "--reporter=list,junit"]
+output = "junit"
+report_file = "playwright-junit.xml"
+
+[custom_adapter.env]
+PLAYWRIGHT_JUNIT_OUTPUT_NAME = "playwright-junit.xml"
 ```
 
 ### Global adapters
