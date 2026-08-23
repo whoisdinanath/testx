@@ -37,7 +37,7 @@ jobs:
             rust: beta
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -57,7 +57,7 @@ jobs:
     env:
       RUSTFLAGS: "-D warnings"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -75,7 +75,7 @@ jobs:
     name: Security Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -91,7 +91,7 @@ jobs:
     name: Coverage
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -115,7 +115,7 @@ jobs:
     name: Minimum Supported Rust Version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Single source of truth: package.rust-version in Cargo.toml.
       - name: Resolve MSRV from Cargo.toml
@@ -143,7 +143,7 @@ jobs:
     env:
       RUSTFLAGS: "-D warnings"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -156,7 +156,7 @@ jobs:
     name: Binary Size Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
 
