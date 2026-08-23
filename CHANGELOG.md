@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-08-23
+
+### Fixed
+
+- **Release**: the crates.io step wrote its log inside the checkout, which left the working
+  tree dirty and made `cargo publish` refuse to run, so 0.3.1 never reached crates.io. The log
+  now goes to the runner temp directory, and both publish steps skip a version that is already
+  on the registry so a re-run is safe.
+
 ## [0.3.1] - 2026-08-23
 
 ### Changed

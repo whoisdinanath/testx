@@ -174,7 +174,14 @@ jobs:
 
       - name: Publish to npm
         working-directory: npm
-        run: npm publish --access public
+        run: |
+          version="${{ github.ref_name }}"
+          version="${version#v}"
+          if npm view "@whoisdinanath/testx@${version}" version >/dev/null 2>&1; then
+            echo "${version} is already on npm, nothing to do"
+          else
+            npm publish --access public
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -189,16 +196,19 @@ jobs:
 
       # Re-running a release must not fail on a version that is already up;
       # crates.io versions are immutable, so treat "already exists" as done.
+      # The log goes outside the checkout - a stray file in the working tree
+      # makes cargo refuse to publish.
       - name: Publish
         run: |
           version="${{ github.ref_name }}"
           version="${version#v}"
-          if cargo publish --locked 2>publish.log; then
+          log="${RUNNER_TEMP}/cargo-publish.log"
+          if cargo publish --locked 2>"$log"; then
             echo "published ${version}"
-          elif grep -q "already exists" publish.log; then
+          elif grep -q "already exists" "$log"; then
             echo "${version} is already on crates.io, nothing to do"
           else
-            cat publish.log
+            cat "$log"
             exit 1
           fi
         env:
