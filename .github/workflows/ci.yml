@@ -105,7 +105,7 @@ jobs:
         run: cargo tarpaulin --locked --out xml --skip-clean --timeout 300 --exclude-files "tests/*" -- --skip cli_stress
 
       - name: Upload coverage
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: cobertura.xml
           token: ${{ secrets.CODECOV_TOKEN }}
